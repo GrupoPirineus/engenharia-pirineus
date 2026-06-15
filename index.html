@@ -514,6 +514,7 @@
   .badge-revisao { background: rgba(99,102,241,0.15); color: #818cf8; }
   .badge-concluido { background: var(--green-dim); color: var(--green); }
   .badge-rejeitado { background: var(--red-dim); color: var(--red); }
+  .badge-correcao { background: rgba(234,88,12,0.12); color: #ea580c; }
 
   .badge-baixa { background: var(--green-dim); color: var(--green); }
   .badge-media { background: var(--blue-dim); color: var(--blue); }
@@ -987,7 +988,7 @@ let charts = {};
 // ═══════════════════════════════════════════════════
 const STATUS_LABELS = {
   solicitacao:'Solicitação', aprovacao:'Aprovação', atribuicao:'Atribuição',
-  execucao:'Execução', revisao:'Revisão', concluido:'Concluído', rejeitado:'Rejeitado'
+  execucao:'Execução', revisao:'Revisão', correcao:'Correção', concluido:'Concluído', rejeitado:'Rejeitado'
 };
 const PRIORIDADE_LABELS = { baixa:'Baixa', media:'Média', alta:'Alta', urgente:'Urgente' };
 const PERFIL_LABELS = {
@@ -1563,6 +1564,7 @@ async function openChamado(id) {
   const atrasado = c.data_desejada && c.data_desejada < hoje && !['concluido','rejeitado'].includes(c.status);
 
   const statusFlow = ['solicitacao','aprovacao','atribuicao','execucao','revisao','concluido'];
+  const statusFlowLabels = ['Solicitação','Aprovação','Atribuição','Execução','Revisão','Concluído'];
   const currentIdx = statusFlow.indexOf(c.status);
 
   let acoes = '';
@@ -1578,15 +1580,22 @@ async function openChamado(id) {
       acoes = `<button class="btn btn-primary btn-sm" onclick="atribuirEngenheiro('${id}')">Atribuir Engenheiro</button>`;
     }
     if (!c.prioridade && c.status !== 'rejeitado') {
-      acoes += `<button class="btn btn-secondary btn-sm" onclick="definirPrioridade('${id}')">Definir Prioridade</button>`;
+      acoes += ` <button class="btn btn-secondary btn-sm" onclick="definirPrioridade('${id}')">Definir Prioridade</button>`;
     }
-    if (c.status === 'revisao') {
-      acoes += `<button class="btn btn-primary btn-sm" onclick="moverStatus('${id}','concluido','Chamado concluído')">✓ Concluir</button>`;
+    if (c.status === 'correcao') {
+      acoes = `
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary btn-sm" onclick="enviarCorrecaoEngenheiro('${id}')">↩ Enviar Correção ao Engenheiro</button>
+          <button class="btn btn-secondary btn-sm" onclick="moverStatus('${id}','concluido','Encerrado pelo gestor')">✓ Encerrar mesmo assim</button>
+        </div>`;
+    }
+    if (c.status === 'concluido') {
+      acoes = `<button class="btn btn-secondary btn-sm" onclick="reabrirConcluido('${id}')">↩ Reabrir Chamado</button>`;
     }
   }
 
   if (isEngenheiro() && c.engenheiro_id === currentUser.id) {
-    if (c.status === 'execucao') {
+    if (c.status === 'execucao' || c.status === 'correcao') {
       acoes = `
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-primary btn-sm" onclick="openLancamento('${id}')">+ Lançar Horas</button>
@@ -1598,6 +1607,13 @@ async function openChamado(id) {
   if (isSolicitante() && c.solicitante_id === currentUser.id) {
     if (c.status === 'rejeitado') {
       acoes = `<button class="btn btn-primary btn-sm" onclick="reabrirChamado('${id}')">Revisar e Reabrir</button>`;
+    }
+    if (c.status === 'revisao') {
+      acoes = `
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary btn-sm" onclick="aprovarRevisao('${id}')">✓ Aprovar e Concluir</button>
+          <button class="btn btn-danger btn-sm" onclick="rejeitarRevisao('${id}')">✗ Solicitar Correção</button>
+        </div>`;
     }
     if (['solicitacao'].includes(c.status)) {
       acoes = `<button class="btn btn-secondary btn-sm" onclick="addAnexo('${id}')">+ Adicionar Anexo</button>`;
@@ -1639,6 +1655,7 @@ async function openChamado(id) {
         <div class="info-item"><span class="info-label">Empresa</span><span class="info-val">${c.empresas?.nome||'—'}</span></div>
         <div class="info-item"><span class="info-label">Setor</span><span class="info-val">${c.setores?.nome||'—'}</span></div>
         <div class="info-item"><span class="info-label">Tipo</span><span class="info-val">${c.tipos_servico?.nome||'—'}</span></div>
+        <div class="info-item"><span class="info-label">Execução</span><span class="info-val"><span class="badge ${c.tipo_execucao === 'projeto_execucao' ? 'badge-execucao' : 'badge-atribuicao'}">${c.tipo_execucao === 'projeto_execucao' ? 'Projeto + Obra' : 'Apenas Projeto'}</span></span></div>
         <div class="info-item"><span class="info-label">Prioridade</span><span class="info-val">${badgePrio(c.prioridade)}</span></div>
         <div class="info-item"><span class="info-label">Solicitante</span><span class="info-val">${c.solicitante?.nome||'—'}</span></div>
         <div class="info-item"><span class="info-label">Engenheiro</span><span class="info-val">${c.engenheiro?.nome||'Não atribuído'}</span></div>
@@ -1775,6 +1792,63 @@ async function confirmarAtribuicao(id) {
   navigateTo(currentPage);
 }
 
+async function aprovarRevisao(id) {
+  await moverStatus(id, 'concluido', 'Aprovado pelo solicitante');
+}
+
+async function rejeitarRevisao(id) {
+  const motivo = document.createElement('div');
+  motivo.className = 'modal-overlay';
+  motivo.id = 'modal-rejeitar-revisao';
+  motivo.innerHTML = `
+    <div class="modal" style="max-width:440px">
+      <div class="modal-header">
+        <h2>Solicitar Correção</h2>
+        <button class="close-btn" onclick="document.getElementById('modal-rejeitar-revisao').remove()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted text-sm" style="margin-bottom:14px">Descreva o que precisa ser corrigido. O gestor será notificado para avaliar.</p>
+        <div class="field">
+          <label>O que precisa ser ajustado *</label>
+          <textarea id="motivo-correcao" rows="4" placeholder="Descreva detalhadamente o que precisa ser corrigido..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="document.getElementById('modal-rejeitar-revisao').remove()">Cancelar</button>
+        <button class="btn btn-danger" onclick="confirmarRejeicaoRevisao('${id}')">Solicitar Correção</button>
+      </div>
+    </div>`;
+  document.body.appendChild(motivo);
+}
+
+async function confirmarRejeicaoRevisao(id) {
+  const motivo = document.getElementById('motivo-correcao')?.value?.trim();
+  if (!motivo) { toast('Descreva o que precisa ser corrigido', 'error'); return; }
+  const { data: c } = await sb.from('chamados').select('status').eq('id',id).single();
+  await sb.from('chamados').update({status:'correcao', motivo_rejeicao:motivo}).eq('id',id);
+  await sb.from('historico_status').insert({chamado_id:id, usuario_id:currentUser.id, status_anterior:c.status, status_novo:'correcao', observacao:motivo});
+  document.querySelectorAll('.modal-overlay').forEach(o => o.remove());
+  toast('Solicitação de correção enviada ao gestor');
+  navigateTo(currentPage);
+}
+
+async function enviarCorrecaoEngenheiro(id) {
+  const { data: c } = await sb.from('chamados').select('status, motivo_rejeicao').eq('id',id).single();
+  await sb.from('chamados').update({status:'execucao'}).eq('id',id);
+  await sb.from('historico_status').insert({chamado_id:id, usuario_id:currentUser.id, status_anterior:'correcao', status_novo:'execucao', observacao:`Correção solicitada: ${c.motivo_rejeicao}`});
+  document.querySelectorAll('.modal-overlay').forEach(o => o.remove());
+  toast('Chamado devolvido ao engenheiro para correção');
+  updateBadges();
+  navigateTo(currentPage);
+}
+
+async function reabrirConcluido(id) {
+  const obs = 'Chamado reaberto pelo gestor';
+  await moverStatus(id, 'execucao', obs);
+}
+
 async function definirPrioridade(id) {
   const prio = prompt('Prioridade (baixa/media/alta/urgente):');
   if (!prio || !['baixa','media','alta','urgente'].includes(prio)) return;
@@ -1840,6 +1914,17 @@ async function openNovoChamado() {
             </div>
           </div>
           <div class="field">
+            <label>Tipo de Execução *</label>
+            <div style="display:flex;gap:12px;margin-top:4px">
+              <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text);cursor:pointer">
+                <input type="radio" name="nc-execucao" value="projeto" checked style="width:auto;accent-color:var(--accent)"> Apenas Projeto
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text);cursor:pointer">
+                <input type="radio" name="nc-execucao" value="projeto_execucao" style="width:auto;accent-color:var(--accent)"> Projeto + Execução de Obra
+              </label>
+            </div>
+          </div>
+          <div class="field">
             <label>Descrição Detalhada *</label>
             <textarea id="nc-descricao" rows="4" placeholder="Descreva o serviço necessário com o máximo de detalhes possível..."></textarea>
           </div>
@@ -1887,10 +1972,11 @@ async function submeterChamado() {
 
   if (!empresa || !setor || !titulo || !tipo || !descricao) { toast('Preencha todos os campos obrigatórios', 'error'); return; }
 
+  const tipoExecucao = document.querySelector('input[name="nc-execucao"]:checked')?.value || 'projeto';
   const { data: chamado, error } = await sb.from('chamados').insert({
     titulo, descricao, empresa_id:empresa, setor_id:setor, tipo_servico_id:tipo,
     solicitante_id:currentUser.id, status:'aprovacao',
-    data_desejada:data||null
+    data_desejada:data||null, tipo_execucao:tipoExecucao
   }).select().single();
 
   if (error) { toast('Erro ao criar chamado: ' + error.message, 'error'); return; }
