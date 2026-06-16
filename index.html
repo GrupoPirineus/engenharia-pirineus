@@ -1155,11 +1155,32 @@ sb.auth.onAuthStateChange(async (event, session) => {
 });
 
 async function loadUserProfile() {
-  const { data } = await sb.from('usuarios').select('*').eq('id', currentUser.id).single();
-  if (!data) { setPage('auth-screen'); return; }
-  currentPerfil = data.perfil;
-  if (data.perfil === 'pendente') { setPage('pending-screen'); return; }
-  setupApp(data);
+  try {
+    const { data, error } = await sb.from('usuarios').select('*').eq('id', currentUser.id).single();
+    if (error || !data) {
+      console.error('Erro ao carregar perfil:', error);
+      // Tentar criar o usuário se não existir
+      const { data: authUser } = await sb.auth.getUser();
+      if (authUser?.user) {
+        await sb.from('usuarios').upsert({
+          id: authUser.user.id,
+          nome: authUser.user.user_metadata?.nome || authUser.user.email.split('@')[0],
+          email: authUser.user.email,
+          perfil: 'solicitante'
+        });
+        const { data: newData } = await sb.from('usuarios').select('*').eq('id', currentUser.id).single();
+        if (newData) { currentPerfil = newData.perfil; setupApp(newData); return; }
+      }
+      setPage('auth-screen');
+      return;
+    }
+    currentPerfil = data.perfil;
+    if (data.perfil === 'pendente') { setPage('pending-screen'); return; }
+    setupApp(data);
+  } catch(e) {
+    console.error('Erro inesperado:', e);
+    setPage('auth-screen');
+  }
 }
 
 // ═══════════════════════════════════════════════════
