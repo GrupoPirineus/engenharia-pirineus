@@ -1057,8 +1057,18 @@ async function doLogin() {
   const msg = document.getElementById('login-msg');
   msg.innerHTML = '';
   if (!email || !pass) { msg.innerHTML = '<p class="error-msg">Preencha todos os campos.</p>'; return; }
+  const btn = document.querySelector('#login-form button[type="submit"]');
+  if (btn) btn.disabled = true;
   const { error } = await sb.auth.signInWithPassword({ email, password: pass });
-  if (error) { msg.innerHTML = `<p class="error-msg">${error.message}</p>`; }
+  if (error) {
+    if (btn) btn.disabled = false;
+    const msgs = {
+      'Invalid login credentials': 'E-mail ou senha incorretos.',
+      'Email not confirmed': 'E-mail não confirmado. Verifique sua caixa de entrada.',
+      'Too many requests': 'Muitas tentativas. Aguarde alguns minutos.'
+    };
+    msg.innerHTML = `<p class="error-msg">${msgs[error.message] || error.message}</p>`;
+  }
 }
 
 async function doRegister() {
@@ -1129,6 +1139,7 @@ async function enviarRecuperacao() {
 async function doLogout() {
   await sb.auth.signOut();
   currentUser = null; currentPerfil = null;
+  sessionStorage.clear();
   setPage('auth-screen');
 }
 
@@ -1136,10 +1147,16 @@ async function doLogout() {
 // SESSION
 // ═══════════════════════════════════════════════════
 sb.auth.onAuthStateChange(async (event, session) => {
-  if (session?.user) {
+  if (event === 'SIGNED_OUT') {
+    currentUser = null; currentPerfil = null;
+    sessionStorage.clear();
+    setPage('auth-screen');
+    return;
+  }
+  if (session?.user && (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION')) {
     currentUser = session.user;
     await loadUserProfile();
-  } else {
+  } else if (!session) {
     setPage('auth-screen');
   }
 });
