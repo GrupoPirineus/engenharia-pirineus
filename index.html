@@ -7,6 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>Engenharia | Grupo Pirineus</title>
+<!-- v2.1 -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -1139,16 +1140,16 @@ async function doLogout() {
 // ═══════════════════════════════════════════════════
 // SESSION
 // ═══════════════════════════════════════════════════
-sb.auth.onAuthStateChange(async (event, session) => {
+// Init — verificar sessão existente
+(async () => {
+  const { data: { session } } = await sb.auth.getSession();
   if (session?.user) {
     currentUser = session.user;
     await loadUserProfile();
   } else {
-    currentUser = null; currentPerfil = null;
-    sessionStorage.clear();
     setPage('auth-screen');
   }
-});
+})();
 
 async function loadUserProfile() {
   try {
