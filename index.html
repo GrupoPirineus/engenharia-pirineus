@@ -1054,7 +1054,11 @@ async function doLogin() {
   const msg = document.getElementById('login-msg');
   msg.innerHTML = '';
   if (!email || !pass) { msg.innerHTML = '<p class="error-msg">Preencha todos os campos.</p>'; return; }
-  const { error } = await sb.auth.signInWithPassword({ email, password: pass });
+  const { data, error } = await sb.auth.signInWithPassword({ email, password: pass });
+  if (!error && data?.user) {
+    setTimeout(() => window.location.reload(), 300);
+    return;
+  }
   if (error) {
     const msgs = {
       'Invalid login credentials': 'E-mail ou senha incorretos.',
