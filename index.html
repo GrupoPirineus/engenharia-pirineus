@@ -229,6 +229,7 @@
   .sidebar-header {
     padding: 20px 16px 16px;
     border-bottom: 1px solid var(--border);
+    background: var(--surface);
   }
 
   .sidebar-logo {
@@ -838,6 +839,22 @@
     background: var(--surface2); border: 1px solid var(--border);
     border-radius: 20px; font-size: 11px; color: var(--text2);
   }
+
+  /* Radio destacado */
+  .radio-option {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 13px; font-weight: 400; text-transform: none; letter-spacing: 0;
+    color: var(--text); cursor: pointer;
+    padding: 10px 14px; border: 1.5px solid var(--border); border-radius: var(--radius);
+    transition: all 0.15s; flex: 1;
+  }
+  .radio-option:hover { border-color: var(--accent); background: var(--accent-dim); }
+  .radio-option input[type="radio"] {
+    width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; margin: 0;
+  }
+  .radio-option.checked {
+    border-color: var(--accent); background: var(--accent-dim); font-weight: 600; color: var(--accent);
+  }
 </style>
 </head>
 <body>
@@ -1082,6 +1099,13 @@ async function doRegister() {
   else { msg.innerHTML = '<p class="success-msg">Cadastro realizado! Verifique seu e-mail e clique no link de confirmação para acessar o sistema.</p>'; }
 }
 
+function selectRadio(label) {
+  const group = label.parentElement;
+  group.querySelectorAll('.radio-option').forEach(o => o.classList.remove('checked'));
+  label.classList.add('checked');
+  label.querySelector('input[type="radio"]').checked = true;
+}
+
 function toggleSenha(inputId, btnId) {
   const input = document.getElementById(inputId);
   const btn = document.getElementById(btnId);
@@ -1202,19 +1226,49 @@ function buildNav() {
   const nav = document.getElementById('sidebar-nav');
   let html = '';
 
-  if (isGestor()) {
-    html += `
+  // Dashboard — todos os perfis
+  html += `
     <div class="nav-section">
-      <div class="nav-label">Gestão</div>
+      <div class="nav-label">Principal</div>
       <button class="nav-item" onclick="navigateTo('dashboard')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
         Dashboard
-      </button>
+      </button>`;
+
+  // Gestores veem todos os chamados
+  if (isGestor()) {
+    html += `
       <button class="nav-item" onclick="navigateTo('chamados')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
         Chamados
         <span class="nav-badge hidden" id="badge-aprovacao">0</span>
-      </button>
+      </button>`;
+  }
+
+  // Engenheiro vê a fila dele
+  if (isEngenheiro()) {
+    html += `
+      <button class="nav-item" onclick="navigateTo('minha-fila')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+        Minha Fila
+      </button>`;
+  }
+
+  // Meus Chamados — todos exceto Master (todos podem criar e acompanhar os próprios)
+  if (!isMaster()) {
+    html += `
+      <button class="nav-item" onclick="navigateTo('meus-chamados')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        Meus Chamados
+      </button>`;
+  }
+  html += `</div>`;
+
+  // Gestão — usuários (só gestores)
+  if (isGestor()) {
+    html += `
+    <div class="nav-section">
+      <div class="nav-label">Gestão</div>
       <button class="nav-item" onclick="navigateTo('usuarios')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
         Usuários
@@ -1223,28 +1277,7 @@ function buildNav() {
     </div>`;
   }
 
-  if (isEngenheiro()) {
-    html += `
-    <div class="nav-section">
-      <div class="nav-label">Meu Trabalho</div>
-      <button class="nav-item" onclick="navigateTo('minha-fila')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-        Minha Fila
-      </button>
-    </div>`;
-  }
-
-  if (isSolicitante()) {
-    html += `
-    <div class="nav-section">
-      <div class="nav-label">Meus Chamados</div>
-      <button class="nav-item" onclick="navigateTo('meus-chamados')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-        Meus Chamados
-      </button>
-    </div>`;
-  }
-
+  // Sistema — configurações (só master)
   if (isMaster()) {
     html += `
     <div class="nav-section">
@@ -1307,13 +1340,29 @@ async function renderDashboard() {
   const page = document.getElementById('page-content');
   page.innerHTML = '<div class="loading"><div class="spinner"></div> Carregando...</div>';
 
+  let escopoLabel = '';
+  if (isGestor()) escopoLabel = '';
+  else if (isEngenheiro()) escopoLabel = 'Mostrando seus chamados criados e atribuídos a você';
+  else if (isSolicitante()) escopoLabel = 'Mostrando seus chamados';
+
   const now = new Date();
   const mesInicio = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
   const mesFim = new Date(now.getFullYear(), now.getMonth()+1, 0).toISOString();
 
+  // Filtro por perfil: gestor vê tudo, engenheiro vê os dele (criados + atribuídos), solicitante vê os criados
+  let baseQuery = sb.from('chamados').select('status, prioridade, data_desejada, empresa_id, tipo_servico_id, criado_em');
+  let mesQuery = sb.from('chamados').select('status, criado_em').gte('criado_em', mesInicio);
+  if (isEngenheiro() && !isGestor()) {
+    baseQuery = baseQuery.or(`solicitante_id.eq.${currentUser.id},engenheiro_id.eq.${currentUser.id}`);
+    mesQuery = mesQuery.or(`solicitante_id.eq.${currentUser.id},engenheiro_id.eq.${currentUser.id}`);
+  } else if (isSolicitante() && !isGestor()) {
+    baseQuery = baseQuery.eq('solicitante_id', currentUser.id);
+    mesQuery = mesQuery.eq('solicitante_id', currentUser.id);
+  }
+
   const [{ data: todos }, { data: mesChamados }, { data: horas }] = await Promise.all([
-    sb.from('chamados').select('status, prioridade, data_desejada, empresa_id, tipo_servico_id, criado_em'),
-    sb.from('chamados').select('status, criado_em').gte('criado_em', mesInicio),
+    baseQuery,
+    mesQuery,
     sb.from('diario_bordo').select('horas, data_trabalho, chamado_id').gte('data_trabalho', mesInicio.split('T')[0])
   ]);
 
@@ -1372,6 +1421,7 @@ async function renderDashboard() {
   });
 
   page.innerHTML = `
+    ${escopoLabel ? `<div style="margin-bottom:16px;padding:10px 14px;background:var(--accent-dim);border-radius:var(--radius);font-size:13px;color:var(--accent);display:inline-block">${escopoLabel}</div>` : ''}
     <div class="stats-grid">
       <div class="stat-card amber"><div class="stat-label">Chamados Abertos</div><div class="stat-value">${abertos}</div></div>
       <div class="stat-card orange"><div class="stat-label">Aguardando Aprovação</div><div class="stat-value">${aguardando}</div></div>
@@ -1508,7 +1558,7 @@ async function renderMeusChamados() {
   page.innerHTML = '<div class="loading"><div class="spinner"></div> Carregando...</div>';
 
   const { data: chamados } = await sb.from('chamados')
-    .select(`*, empresas(nome), setores(nome), tipos_servico(nome), engenheiro:usuarios!chamados_engenheiro_id_fkey(nome)`)
+    .select(`*, empresas(nome), setores(nome), tipos_servico(nome), engenheiro:engenheiro_id(nome)`)
     .eq('solicitante_id', currentUser.id)
     .order('criado_em', {ascending:false});
 
@@ -1548,7 +1598,7 @@ async function renderMinhaFila() {
   page.innerHTML = '<div class="loading"><div class="spinner"></div> Carregando...</div>';
 
   const { data: chamados } = await sb.from('chamados')
-    .select(`*, empresas(nome), setores(nome), tipos_servico(nome), solicitante:usuarios!chamados_solicitante_id_fkey(nome)`)
+    .select(`*, empresas(nome), setores(nome), tipos_servico(nome), solicitante:solicitante_id(nome)`)
     .eq('engenheiro_id', currentUser.id)
     .not('status', 'in', '("concluido","rejeitado")')
     .order('criado_em', {ascending:false});
@@ -1958,12 +2008,12 @@ async function openNovoChamado() {
           </div>
           <div class="field">
             <label>Tipo de Execução *</label>
-            <div style="display:flex;gap:12px;margin-top:4px">
-              <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text);cursor:pointer">
-                <input type="radio" name="nc-execucao" value="projeto" checked style="width:auto;accent-color:var(--accent)"> Apenas Projeto
+            <div style="display:flex;gap:12px;margin-top:4px" id="nc-execucao-group">
+              <label class="radio-option checked" onclick="selectRadio(this)">
+                <input type="radio" name="nc-execucao" value="projeto" checked> Apenas Projeto
               </label>
-              <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text);cursor:pointer">
-                <input type="radio" name="nc-execucao" value="projeto_execucao" style="width:auto;accent-color:var(--accent)"> Projeto + Execução de Obra
+              <label class="radio-option" onclick="selectRadio(this)">
+                <input type="radio" name="nc-execucao" value="projeto_execucao"> Projeto + Execução de Obra
               </label>
             </div>
           </div>
