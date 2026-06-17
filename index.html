@@ -1645,6 +1645,7 @@ async function openChamado(id) {
   const { data: diario } = await sb.from('diario_bordo').select('*').eq('chamado_id', id).order('data_trabalho', {ascending:false});
   const { data: historico } = await sb.from('historico_status').select('*, usuario:usuarios(nome)').eq('chamado_id', id).order('criado_em', {ascending:false});
   const { data: anexos } = await sb.from('anexos_chamado').select('*').eq('chamado_id', id);
+  const { data: comentarios } = await sb.from('comentarios_chamado').select('*, usuario:usuario_id(nome,email), anexos_comentario(*)').eq('chamado_id', id).order('criado_em', {ascending:true});
 
   const totalHoras = (diario||[]).reduce((a,b) => a+b.horas, 0);
   const hoje = new Date().toISOString().split('T')[0];
@@ -1818,6 +1819,46 @@ async function openChamado(id) {
               </div>
               <div class="diario-desc">${d.descricao}</div>
             </div>`).join('')}
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="form-section">
+        <div class="form-section-title">Conversa do Chamado</div>
+        <div id="chat-messages" style="margin-top:14px;max-height:400px;overflow-y:auto">
+          ${(comentarios||[]).length === 0 ? '<div class="empty-state" style="padding:24px"><div class="empty-icon" style="font-size:24px">💬</div><div class="empty-desc">Nenhuma mensagem ainda. Inicie a conversa abaixo.</div></div>' :
+          comentarios.map(cm => {
+            const isMe = cm.usuario_id === currentUser.id;
+            return `
+            <div style="display:flex;flex-direction:column;margin-bottom:14px;align-items:${isMe ? 'flex-end' : 'flex-start'}">
+              <div style="max-width:75%;background:${isMe ? 'var(--accent-dim)' : 'var(--surface2)'};border:1px solid ${isMe ? 'var(--accent)' : 'var(--border)'};border-radius:var(--radius-lg);padding:10px 14px">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                  <span style="font-size:12px;font-weight:600;color:${isMe ? 'var(--accent)' : 'var(--text)'}">${cm.usuario?.nome||'—'}</span>
+                  <span style="font-size:10px;color:var(--text3)">${fmtDateTime(cm.criado_em)}</span>
+                </div>
+                <div style="font-size:13px;color:var(--text);line-height:1.5;white-space:pre-wrap">${cm.mensagem}</div>
+                ${(cm.anexos_comentario||[]).length > 0 ? `
+                  <div style="margin-top:8px;display:flex;flex-direction:column;gap:4px">
+                    ${cm.anexos_comentario.map(a => `<a href="#" onclick="downloadAnexo('${a.storage_path}','anexos-comentarios','${a.nome_arquivo}');return false;" style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--accent);text-decoration:none"><span>📎</span> ${a.nome_arquivo}</a>`).join('')}
+                  </div>` : ''}
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+        <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:14px">
+          <textarea id="chat-input" rows="2" placeholder="Digite sua mensagem..." style="margin-bottom:8px"></textarea>
+          <div style="display:flex;align-items:center;gap:8px;justify-content:space-between">
+            <div style="display:flex;align-items:center;gap:8px">
+              <input type="file" id="chat-files" multiple style="display:none" onchange="previewChatFiles(this)">
+              <button class="btn btn-secondary btn-sm" onclick="document.getElementById('chat-files').click()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+                Anexar
+              </button>
+              <span id="chat-file-count" class="text-xs text-muted"></span>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="enviarComentario('${id}')">Enviar</button>
+          </div>
         </div>
       </div>
 
@@ -2334,6 +2375,47 @@ async function imprimirChamado(id) {
   </body></html>`);
   win.document.close();
   setTimeout(() => win.print(), 500);
+}
+
+let chatFilesSelected = [];
+
+function previewChatFiles(input) {
+  chatFilesSelected = Array.from(input.files);
+  const count = document.getElementById('chat-file-count');
+  if (count) count.textContent = chatFilesSelected.length > 0 ? `${chatFilesSelected.length} arquivo(s)` : '';
+}
+
+async function enviarComentario(chamadoId) {
+  const input = document.getElementById('chat-input');
+  const mensagem = input?.value?.trim();
+  const files = document.getElementById('chat-files')?.files || [];
+  if (!mensagem && files.length === 0) { toast('Digite uma mensagem ou anexe um arquivo', 'error'); return; }
+
+  const { data: coment, error } = await sb.from('comentarios_chamado').insert({
+    chamado_id: chamadoId,
+    usuario_id: currentUser.id,
+    mensagem: mensagem || '(arquivo anexado)'
+  }).select().single();
+
+  if (error) { toast('Erro ao enviar: ' + error.message, 'error'); return; }
+
+  // Upload de anexos
+  for (const file of files) {
+    const path = `${coment.id}/${Date.now()}_${file.name}`;
+    const { error: upErr } = await sb.storage.from('anexos-comentarios').upload(path, file);
+    if (!upErr) {
+      await sb.from('anexos_comentario').insert({
+        comentario_id: coment.id, nome_arquivo: file.name, storage_path: path,
+        tamanho_bytes: file.size, tipo_mime: file.type
+      });
+    }
+  }
+
+  chatFilesSelected = [];
+  toast('Mensagem enviada');
+  // Reabrir o chamado para atualizar o chat
+  document.querySelector('.modal-overlay')?.remove();
+  openChamado(chamadoId);
 }
 
 async function downloadAnexo(path, bucket, nome) {
