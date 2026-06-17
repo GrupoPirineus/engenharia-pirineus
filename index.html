@@ -1553,7 +1553,7 @@ async function renderChamados(filtroStatus='') {
 // ═══════════════════════════════════════════════════
 async function renderMeusChamados() {
   document.getElementById('topbar-title').textContent = 'Meus Chamados';
-  document.getElementById('topbar-actions').innerHTML = `<button class="btn btn-primary btn-sm" onclick="openNovoChamado()">+ Novo Chamado</button>`;
+  document.getElementById('topbar-actions').innerHTML = '';
   const page = document.getElementById('page-content');
   page.innerHTML = '<div class="loading"><div class="spinner"></div> Carregando...</div>';
 
