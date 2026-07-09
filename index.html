@@ -1955,6 +1955,7 @@ async function confirmarAprovacao(id) {
     toast('Chamado aprovado e engenheiro atribuído');
   } else {
     // Só aprovar (fluxo atual): vai para atribuição.
+    document.querySelectorAll('.modal-overlay').forEach(o => o.remove());
     await moverStatus(id, 'atribuicao', 'Chamado aprovado');
   }
   updateBadges();
