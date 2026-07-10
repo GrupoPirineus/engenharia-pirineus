@@ -1088,7 +1088,11 @@ async function doLogin() {
       'Email not confirmed': 'E-mail não confirmado. Verifique sua caixa de entrada.',
       'Too many requests': 'Muitas tentativas. Aguarde alguns minutos.'
     };
-    msg.innerHTML = `<p class="error-msg">${msgs[error.message] || error.message}</p>`;
+    const bloqueado = /banned/i.test(error.message);
+    const textoFinal = bloqueado
+      ? 'Usuário bloqueado. Contate seu gestor.'
+      : (msgs[error.message] || error.message);
+    msg.innerHTML = `<p class="error-msg">${textoFinal}</p>`;
   }
 }
 
