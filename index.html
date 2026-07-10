@@ -177,6 +177,10 @@
   .btn-secondary:hover { border-color: var(--border2); }
   .btn-danger { background: var(--red-dim); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
   .btn-danger:hover { background: rgba(239,68,68,0.2); }
+  .btn-warning { background: var(--orange-dim); color: var(--orange); border: 1px solid rgba(224,120,32,0.3); }
+  .btn-warning:hover { background: rgba(224,120,32,0.2); }
+  .btn-success { background: var(--green-dim); color: var(--green); border: 1px solid rgba(14,158,110,0.3); }
+  .btn-success:hover { background: rgba(14,158,110,0.2); }
   .btn-ghost { background: transparent; color: var(--text2); }
   .btn-ghost:hover { color: var(--text); background: var(--surface2); }
   .btn-sm { padding: 6px 12px; font-size: 13px; }
@@ -530,6 +534,8 @@
   .badge-engenheiro { background: var(--purple-dim); color: var(--purple); }
   .badge-gestor { background: var(--accent-dim); color: var(--accent); }
   .badge-gestor_master { background: var(--red-dim); color: var(--red); }
+  .badge-danger { background: var(--red-dim); color: var(--red); }
+  .badge-success { background: var(--green-dim); color: var(--green); }
 
   /* ── MODAL ── */
   .modal-overlay {
@@ -2501,17 +2507,25 @@ async function renderUsuarios() {
       <div class="table-header"><div class="table-title">Usuários do Sistema</div></div>
       <div style="overflow-x:auto">
       <table>
-        <thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Desde</th><th>Ação</th></tr></thead>
+        <thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Status</th><th>Desde</th><th>Ação</th></tr></thead>
         <tbody>
           ${(usuarios||[]).map(u => `
             <tr>
               <td><strong>${u.nome}</strong></td>
               <td><span class="text-muted text-sm">${u.email}</span></td>
               <td>${badgePerfil(u.perfil)}</td>
+              <td>${u.ativo === false ? '<span class="badge badge-danger">Bloqueado</span>' : '<span class="badge badge-success">Ativo</span>'}</td>
               <td><span class="text-muted text-sm">${fmtDate(u.criado_em)}</span></td>
-              <td>${u.id !== currentUser.id ? `<select class="filter-select" onchange="alterarPerfil('${u.id}',this.value)">
-                ${['pendente','solicitante','engenheiro','gestor','gestor_master'].map(p => `<option value="${p}" ${u.perfil===p?'selected':''}>${PERFIL_LABELS[p]}</option>`).join('')}
-              </select>` : '<span class="text-muted text-xs">Você</span>'}</td>
+              <td>${u.id !== currentUser.id ? `
+                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                  <select class="filter-select" onchange="alterarPerfil('${u.id}',this.value)">
+                    ${['pendente','solicitante','engenheiro','gestor','gestor_master'].map(p => `<option value="${p}" ${u.perfil===p?'selected':''}>${PERFIL_LABELS[p]}</option>`).join('')}
+                  </select>
+                  <button class="btn btn-sm ${u.ativo === false ? 'btn-success' : 'btn-warning'}" onclick="bloquearUsuario('${u.id}','${u.nome.replace(/'/g,"\\'")}', ${u.ativo === false ? 'false' : 'true'})">
+                    ${u.ativo === false ? 'Desbloquear' : 'Bloquear'}
+                  </button>
+                  <button class="btn btn-sm btn-danger" onclick="apagarUsuario('${u.id}','${u.nome.replace(/'/g,"\\'")}')">Apagar</button>
+                </div>` : '<span class="text-muted text-xs">Você</span>'}</td>
             </tr>`).join('')}
         </tbody>
       </table>
@@ -2524,6 +2538,58 @@ async function alterarPerfil(userId, novoPerfil) {
   if (error) { toast('Erro: ' + error.message, 'error'); return; }
   toast('Perfil atualizado');
   updateBadges();
+}
+
+// ─── Bloquear / Desbloquear (Caminho B: bloqueio real no Auth via Edge Function) ───
+async function bloquearUsuario(userId, nome, bloquear) {
+  const acao = bloquear ? 'bloquear' : 'desbloquear';
+  if (!confirm(`Confirma ${acao} o acesso de "${nome}"? ${bloquear ? 'A pessoa não conseguirá mais fazer login até ser desbloqueada.' : 'A pessoa voltará a conseguir fazer login.'}`)) return;
+
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { toast('Sessão expirada, faça login novamente', 'error'); return; }
+
+  try {
+    const resp = await fetch(`${SUPABASE_URL}/functions/v1/bloquear-usuario`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify({ target_id: userId, bloquear })
+    });
+    const result = await resp.json();
+    if (!resp.ok) { toast('Erro: ' + (result.error || 'falha ao processar'), 'error'); return; }
+    toast(bloquear ? 'Usuário bloqueado' : 'Usuário desbloqueado');
+    renderUsuarios();
+  } catch (e) {
+    toast('Erro de conexão: ' + e.message, 'error');
+  }
+}
+
+// ─── Apagar (só permite se não houver histórico vinculado) ───
+async function apagarUsuario(userId, nome) {
+  toast('Verificando histórico...', 'success');
+
+  const [chamados, diario, comentarios, historico] = await Promise.all([
+    sb.from('chamados').select('id', {count:'exact',head:true}).or(`solicitante_id.eq.${userId},engenheiro_id.eq.${userId}`),
+    sb.from('diario_bordo').select('id', {count:'exact',head:true}).eq('engenheiro_id', userId),
+    sb.from('comentarios_chamado').select('id', {count:'exact',head:true}).eq('usuario_id', userId),
+    sb.from('historico_status').select('id', {count:'exact',head:true}).eq('usuario_id', userId)
+  ]);
+
+  const totalHistorico = (chamados.count||0) + (diario.count||0) + (comentarios.count||0) + (historico.count||0);
+
+  if (totalHistorico > 0) {
+    alert(`"${nome}" não pode ser apagado: existem ${totalHistorico} registro(s) vinculados (chamados, lançamentos de horas, comentários ou histórico de status).\n\nUse o botão "Bloquear" em vez de apagar — isso impede o acesso sem perder o histórico.`);
+    return;
+  }
+
+  if (!confirm(`"${nome}" não tem histórico vinculado. Confirma apagar este usuário do sistema? Esta ação não pode ser desfeita pela interface.`)) return;
+
+  const { error } = await sb.from('usuarios').delete().eq('id', userId);
+  if (error) { toast('Erro ao apagar: ' + error.message, 'error'); return; }
+  toast('Usuário apagado');
+  renderUsuarios();
 }
 
 // ═══════════════════════════════════════════════════
