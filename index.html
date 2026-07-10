@@ -2570,7 +2570,7 @@ async function bloquearUsuario(userId, nome, bloquear) {
   }
 }
 
-// ─── Apagar (só permite se não houver histórico vinculado) ───
+// ─── Apagar (via Edge Function: verifica histórico no servidor e apaga Auth + perfil) ───
 async function apagarUsuario(userId, nome) {
   toast('Verificando histórico...', 'success');
 
@@ -2588,12 +2588,27 @@ async function apagarUsuario(userId, nome) {
     return;
   }
 
-  if (!confirm(`"${nome}" não tem histórico vinculado. Confirma apagar este usuário do sistema? Esta ação não pode ser desfeita pela interface.`)) return;
+  if (!confirm(`"${nome}" não tem histórico vinculado. Confirma apagar este usuário do sistema? Isso remove o acesso e o login dele por completo. Esta ação não pode ser desfeita.`)) return;
 
-  const { error } = await sb.from('usuarios').delete().eq('id', userId);
-  if (error) { toast('Erro ao apagar: ' + error.message, 'error'); return; }
-  toast('Usuário apagado');
-  renderUsuarios();
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { toast('Sessão expirada, faça login novamente', 'error'); return; }
+
+  try {
+    const resp = await fetch(`${SUPABASE_URL}/functions/v1/apagar-usuario`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify({ target_id: userId })
+    });
+    const result = await resp.json();
+    if (!resp.ok) { toast('Erro: ' + (result.error || 'falha ao apagar'), 'error'); return; }
+    toast('Usuário apagado');
+    renderUsuarios();
+  } catch (e) {
+    toast('Erro de conexão: ' + e.message, 'error');
+  }
 }
 
 // ═══════════════════════════════════════════════════
