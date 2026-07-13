@@ -2339,16 +2339,18 @@ async function submeterChamado() {
 
   // Upload de arquivos
   const files = document.getElementById('nc-files').files;
+  const falhasAnexo = [];
   for (const file of files) {
     const path = `${chamado.id}/${Date.now()}_${file.name}`;
     const { error: upErr } = await sb.storage.from('anexos-chamados').upload(path, file);
-    if (!upErr) {
-      await sb.from('anexos_chamado').insert({ chamado_id:chamado.id, usuario_id:currentUser.id, nome_arquivo:file.name, storage_path:path, tamanho_bytes:file.size, tipo_mime:file.type });
-    }
+    if (upErr) { falhasAnexo.push(`${file.name}: ${upErr.message}`); continue; }
+    const { error: insErr } = await sb.from('anexos_chamado').insert({ chamado_id:chamado.id, usuario_id:currentUser.id, nome_arquivo:file.name, storage_path:path, tamanho_bytes:file.size, tipo_mime:file.type });
+    if (insErr) falhasAnexo.push(`${file.name}: ${insErr.message}`);
   }
+  if (falhasAnexo.length) toast('Chamado criado, mas houve erro no(s) anexo(s): ' + falhasAnexo.join(' | '), 'error');
 
   document.querySelector('.modal-overlay')?.remove();
-  toast(`Chamado ${chamado.codigo} criado com sucesso!`);
+  if (!falhasAnexo.length) toast(`Chamado ${chamado.codigo} criado com sucesso!`);
   updateBadges();
   navigateTo(currentPage);
 }
@@ -2440,14 +2442,21 @@ async function confirmarLancamento(chamadoId) {
   if (novaEst) await sb.from('chamados').update({horas_estimadas:parseFloat(novaEst)}).eq('id',chamadoId);
 
   const files = document.getElementById('lan-files').files;
+  const falhasAnexo = [];
   for (const file of files) {
     const path = `${lancamento.id}/${Date.now()}_${file.name}`;
     const { error: upErr } = await sb.storage.from('anexos-diario').upload(path, file);
-    if (!upErr) await sb.from('anexos_diario').insert({diario_id:lancamento.id, nome_arquivo:file.name, storage_path:path, tamanho_bytes:file.size, tipo_mime:file.type});
+    if (upErr) { falhasAnexo.push(`${file.name}: ${upErr.message}`); continue; }
+    const { error: insErr } = await sb.from('anexos_diario').insert({diario_id:lancamento.id, nome_arquivo:file.name, storage_path:path, tamanho_bytes:file.size, tipo_mime:file.type});
+    if (insErr) falhasAnexo.push(`${file.name}: ${insErr.message}`);
   }
 
   document.querySelectorAll('.modal-overlay').forEach(o => o.remove());
-  toast('Lançamento salvo com sucesso!');
+  if (falhasAnexo.length) {
+    toast('Lançamento salvo, mas houve erro no(s) anexo(s): ' + falhasAnexo.join(' | '), 'error');
+  } else {
+    toast('Lançamento salvo com sucesso!');
+  }
   navigateTo(currentPage);
 }
 
