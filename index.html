@@ -2192,11 +2192,34 @@ async function loadSetores(empresaId) {
 }
 
 function previewFiles(input) {
-  const list = document.getElementById('nc-file-list');
-  list.innerHTML = '';
-  Array.from(input.files).forEach((f,i) => {
-    list.innerHTML += `<div class="file-item"><span>📄</span><span class="file-item-name">${f.name}</span><span class="text-xs text-muted">${(f.size/1024).toFixed(0)}KB</span></div>`;
-  });
+  renderFileList(input, 'nc-file-list', 'nc-files');
+}
+
+function previewLanFiles(input) {
+  renderFileList(input, 'lan-file-list', 'lan-files');
+}
+
+// Renderiza a lista de arquivos de um <input type="file"> com botão de remover.
+// Usa DataTransfer pra reconstruir o FileList sem o item removido, mantendo o
+// input.files sincronizado — assim submeterChamado()/confirmarLancamento() continuam
+// lendo o input normalmente, sem precisar saber que um item foi removido antes do envio.
+function renderFileList(input, listId, inputId) {
+  const list = document.getElementById(listId);
+  list.innerHTML = Array.from(input.files).map((f,i) => `
+    <div class="file-item">
+      <span>📄</span>
+      <span class="file-item-name">${f.name}</span>
+      <span class="text-xs text-muted">${(f.size/1024).toFixed(0)}KB</span>
+      <a href="#" onclick="removerArquivoSelecionado('${inputId}','${listId}',${i});return false;" style="color:var(--red);font-size:14px;font-weight:bold;margin-left:6px;text-decoration:none" title="Remover arquivo">✕</a>
+    </div>`).join('');
+}
+
+function removerArquivoSelecionado(inputId, listId, index) {
+  const input = document.getElementById(inputId);
+  const dt = new DataTransfer();
+  Array.from(input.files).forEach((f,i) => { if (i !== index) dt.items.add(f); });
+  input.files = dt.files;
+  renderFileList(input, listId, inputId);
 }
 
 async function submeterChamado() {
@@ -2304,11 +2327,6 @@ async function openLancamento(chamadoId) {
       </div>
     </div>`;
   document.body.appendChild(overlay);
-}
-
-function previewLanFiles(input) {
-  const list = document.getElementById('lan-file-list');
-  list.innerHTML = Array.from(input.files).map(f => `<div class="file-item"><span>📄</span><span class="file-item-name">${f.name}</span></div>`).join('');
 }
 
 async function confirmarLancamento(chamadoId) {
