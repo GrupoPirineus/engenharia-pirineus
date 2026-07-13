@@ -2040,8 +2040,15 @@ async function abrirRevisarReenviar(id) {
 
 async function removerAnexoExistente(anexoId, storagePath) {
   if (!confirm('Remover este anexo? Essa ação não pode ser desfeita.')) return;
-  await sb.storage.from('anexos-chamados').remove([storagePath]);
-  await sb.from('anexos_chamado').delete().eq('id', anexoId);
+
+  const { error: storageErr } = await sb.storage.from('anexos-chamados').remove([storagePath]);
+  const { error: dbErr } = await sb.from('anexos_chamado').delete().eq('id', anexoId);
+
+  if (storageErr || dbErr) {
+    toast('Erro ao remover anexo: ' + (dbErr?.message || storageErr?.message || 'falha desconhecida'), 'error');
+    return; // não remove da tela — se falhou de verdade, o item continua visível, refletindo a realidade
+  }
+
   document.getElementById(`anexo-existente-${anexoId}`)?.remove();
   toast('Anexo removido');
 }
