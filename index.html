@@ -1704,7 +1704,7 @@ async function openChamado(id) {
 
   if (isSolicitante() && c.solicitante_id === currentUser.id) {
     if (c.status === 'rejeitado') {
-      acoes = `<button class="btn btn-primary btn-sm" onclick="reabrirChamado('${id}')">Revisar e Reabrir</button>`;
+      acoes = `<button class="btn btn-primary btn-sm" onclick="abrirRevisarReenviar('${id}')">✎ Revisar e Reenviar</button>`;
     }
     if (c.status === 'revisao') {
       acoes = `
