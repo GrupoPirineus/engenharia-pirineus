@@ -1714,7 +1714,7 @@ async function openChamado(id) {
         </div>`;
     }
     if (['solicitacao'].includes(c.status)) {
-      acoes = `<button class="btn btn-secondary btn-sm" onclick="addAnexo('${id}')">+ Adicionar Anexo</button>`;
+      acoes = `<button class="btn btn-primary btn-sm" onclick="abrirRevisarReenviar('${id}')">✎ Revisar e Reenviar</button>`;
     }
   }
 
@@ -1986,6 +1986,87 @@ async function rejeitarChamado(id) {
 
 async function reabrirChamado(id) {
   await moverStatus(id, 'solicitacao', 'Chamado reaberto pelo solicitante após rejeição');
+}
+
+// ─── Revisar e Reenviar (chamado reaberto após rejeição, status 'solicitacao') ───
+async function abrirRevisarReenviar(id) {
+  const { data: c } = await sb.from('chamados').select('*').eq('id', id).single();
+  const { data: anexos } = await sb.from('anexos_chamado').select('*').eq('chamado_id', id);
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h2>Revisar e Reenviar — ${c.codigo}</h2>
+        <button class="close-btn" onclick="this.closest('.modal-overlay').remove()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        ${c.motivo_rejeicao ? `<div style="background:var(--red-dim);border:1px solid rgba(239,68,68,0.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:16px"><div class="text-xs" style="color:var(--red);margin-bottom:4px;font-weight:600">MOTIVO DA REJEIÇÃO</div><div class="text-sm">${c.motivo_rejeicao}</div></div>` : ''}
+        <div class="field">
+          <label>Descrição Detalhada *</label>
+          <textarea id="rv-descricao" rows="4">${c.descricao||''}</textarea>
+        </div>
+        <div class="form-section">
+          <div class="form-section-title">Anexos Atuais</div>
+          <div class="file-list" id="rv-anexos-existentes">
+            ${(anexos||[]).length === 0 ? '<div class="text-xs text-muted">Nenhum anexo ainda.</div>' : anexos.map(a => `
+              <div class="file-item" id="anexo-existente-${a.id}">
+                <span>📎</span><span class="file-item-name">${a.nome_arquivo}</span>
+                <a href="#" onclick="downloadAnexo('${a.storage_path}','anexos-chamados','${a.nome_arquivo}');return false;" style="color:var(--accent);font-size:12px">↓</a>
+                <a href="#" onclick="removerAnexoExistente('${a.id}','${a.storage_path}');return false;" style="color:var(--red);font-size:14px;font-weight:bold;margin-left:4px;text-decoration:none" title="Remover anexo">✕</a>
+              </div>`).join('')}
+          </div>
+        </div>
+        <div class="form-section">
+          <div class="form-section-title">Adicionar Novos Anexos</div>
+          <div class="file-upload-area" onclick="document.getElementById('rv-files').click()">
+            <input type="file" id="rv-files" multiple onchange="renderFileList(this,'rv-file-list','rv-files')">
+            <div class="file-upload-icon">📎</div>
+            <div class="file-upload-text">Clique para selecionar arquivos ou arraste aqui<br><span class="text-xs text-muted">Plantas, fotos, documentos</span></div>
+          </div>
+          <div class="file-list" id="rv-file-list"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+        <button class="btn btn-primary" onclick="confirmarReenvio('${id}')">Reenviar para Aprovação</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function removerAnexoExistente(anexoId, storagePath) {
+  if (!confirm('Remover este anexo? Essa ação não pode ser desfeita.')) return;
+  await sb.storage.from('anexos-chamados').remove([storagePath]);
+  await sb.from('anexos_chamado').delete().eq('id', anexoId);
+  document.getElementById(`anexo-existente-${anexoId}`)?.remove();
+  toast('Anexo removido');
+}
+
+async function confirmarReenvio(id) {
+  const descricao = document.getElementById('rv-descricao').value.trim();
+  if (!descricao) { toast('A descrição não pode ficar vazia', 'error'); return; }
+
+  const { data: c } = await sb.from('chamados').select('status').eq('id', id).single();
+  await sb.from('chamados').update({ descricao, status: 'aprovacao', motivo_rejeicao: null }).eq('id', id);
+  await sb.from('historico_status').insert({ chamado_id: id, usuario_id: currentUser.id, status_anterior: c.status, status_novo: 'aprovacao', observacao: 'Reenviado para aprovação pelo solicitante' });
+
+  const filesInput = document.getElementById('rv-files');
+  for (const file of (filesInput?.files || [])) {
+    const path = `${id}/${Date.now()}_${file.name}`;
+    const { error: upErr } = await sb.storage.from('anexos-chamados').upload(path, file);
+    if (!upErr) {
+      await sb.from('anexos_chamado').insert({ chamado_id: id, usuario_id: currentUser.id, nome_arquivo: file.name, storage_path: path, tamanho_bytes: file.size, tipo_mime: file.type });
+    }
+  }
+
+  document.querySelectorAll('.modal-overlay').forEach(o => o.remove());
+  toast('Chamado reenviado para aprovação!');
+  updateBadges();
+  navigateTo(currentPage);
 }
 
 async function atribuirEngenheiro(id) {
