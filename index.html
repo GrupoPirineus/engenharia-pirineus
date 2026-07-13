@@ -2062,16 +2062,21 @@ async function confirmarReenvio(id) {
   await sb.from('historico_status').insert({ chamado_id: id, usuario_id: currentUser.id, status_anterior: c.status, status_novo: 'aprovacao', observacao: 'Reenviado para aprovação pelo solicitante' });
 
   const filesInput = document.getElementById('rv-files');
+  const falhasAnexo = [];
   for (const file of (filesInput?.files || [])) {
     const path = `${id}/${Date.now()}_${file.name}`;
     const { error: upErr } = await sb.storage.from('anexos-chamados').upload(path, file);
-    if (!upErr) {
-      await sb.from('anexos_chamado').insert({ chamado_id: id, usuario_id: currentUser.id, nome_arquivo: file.name, storage_path: path, tamanho_bytes: file.size, tipo_mime: file.type });
-    }
+    if (upErr) { falhasAnexo.push(`${file.name}: ${upErr.message}`); continue; }
+    const { error: insErr } = await sb.from('anexos_chamado').insert({ chamado_id: id, usuario_id: currentUser.id, nome_arquivo: file.name, storage_path: path, tamanho_bytes: file.size, tipo_mime: file.type });
+    if (insErr) falhasAnexo.push(`${file.name}: ${insErr.message}`);
   }
 
   document.querySelectorAll('.modal-overlay').forEach(o => o.remove());
-  toast('Chamado reenviado para aprovação!');
+  if (falhasAnexo.length) {
+    toast('Chamado reenviado, mas houve erro no(s) anexo(s): ' + falhasAnexo.join(' | '), 'error');
+  } else {
+    toast('Chamado reenviado para aprovação!');
+  }
   updateBadges();
   navigateTo(currentPage);
 }
