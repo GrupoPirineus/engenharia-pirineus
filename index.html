@@ -1826,6 +1826,7 @@ async function openChamado(id) {
                 <span class="badge ${d.tipo === 'projeto' ? 'badge-execucao' : 'badge-revisao'}">${TIPO_LANCAMENTO[d.tipo]||d.tipo}</span>
                 <span class="diario-date">${fmtDate(d.data_trabalho)}</span>
                 <span class="diario-hours">${d.horas}h</span>
+                ${isEngenheiro() && d.engenheiro_id === currentUser.id ? `<a href="#" onclick="editarLancamento('${d.id}','${id}');return false;" style="margin-left:auto;color:var(--accent);font-size:12px;text-decoration:none" title="Editar lançamento">✎ Editar</a>` : ''}
               </div>
               <div class="diario-desc">${d.descricao}</div>
               ${(d.anexos_diario||[]).length > 0 ? `
@@ -2485,6 +2486,119 @@ async function confirmarLancamento(chamadoId) {
     toast('Lançamento salvo, mas houve erro no(s) anexo(s): ' + falhasAnexo.join(' | '), 'error');
   } else {
     toast('Lançamento salvo com sucesso!');
+  }
+  navigateTo(currentPage);
+}
+
+// ─── Editar lançamento do Diário de Bordo (engenheiro dono do lançamento) ───
+async function editarLancamento(lancamentoId, chamadoId) {
+  const { data: d } = await sb.from('diario_bordo').select('*, anexos_diario(*)').eq('id', lancamentoId).single();
+  const { data: c } = await sb.from('chamados').select('codigo, titulo, tipo_execucao').eq('id', chamadoId).single();
+  if (!d) { toast('Lançamento não encontrado', 'error'); return; }
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <div class="modal-header">
+        <div><h2>Editar Lançamento</h2><div class="text-xs text-muted font-mono" style="margin-top:4px">${c.codigo} — ${c.titulo}</div></div>
+        <button class="close-btn" onclick="this.closest('.modal-overlay').remove()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row">
+          <div class="field">
+            <label>Tipo *</label>
+            <select id="ed-tipo">
+              <option value="projeto" ${d.tipo === 'projeto' ? 'selected' : ''}>Projeto</option>
+              ${c.tipo_execucao === 'projeto_execucao' ? `<option value="acompanhamento_obra" ${d.tipo === 'acompanhamento_obra' ? 'selected' : ''}>Acompanhamento de Obra</option>` : ''}
+            </select>
+          </div>
+          <div class="field">
+            <label>Data *</label>
+            <input type="date" id="ed-data" value="${d.data_trabalho}">
+          </div>
+        </div>
+        <div class="field">
+          <label>Horas *</label>
+          <input type="number" id="ed-horas" value="${d.horas}" min="0" step="0.5">
+        </div>
+        <div class="field">
+          <label>Descrição da Atividade *</label>
+          <textarea id="ed-descricao" rows="4">${d.descricao||''}</textarea>
+        </div>
+        <div class="form-section">
+          <div class="form-section-title">Anexos Atuais</div>
+          <div class="file-list" id="ed-anexos-existentes">
+            ${(d.anexos_diario||[]).length === 0 ? '<div class="text-xs text-muted">Nenhum anexo neste lançamento.</div>' : d.anexos_diario.map(a => `
+              <div class="file-item" id="anexo-diario-${a.id}">
+                <span>📎</span><span class="file-item-name">${a.nome_arquivo}</span>
+                <a href="#" onclick="downloadAnexo('${a.storage_path}','anexos-diario','${a.nome_arquivo}');return false;" style="color:var(--accent);font-size:12px">↓</a>
+                <a href="#" onclick="removerAnexoDiario('${a.id}','${a.storage_path}');return false;" style="color:var(--red);font-size:14px;font-weight:bold;margin-left:4px;text-decoration:none" title="Remover anexo">✕</a>
+              </div>`).join('')}
+          </div>
+        </div>
+        <div class="form-section">
+          <div class="form-section-title">Adicionar Novos Anexos</div>
+          <div class="file-upload-area" onclick="document.getElementById('ed-files').click()">
+            <input type="file" id="ed-files" multiple accept="image/*,.pdf,.dwg,.doc,.docx,.pptx,.xlsx" onchange="addFiles(this,'ed-files','ed-file-list')">
+            <div class="file-upload-icon">📷</div>
+            <div class="file-upload-text">Fotos do andamento ou documentos</div>
+          </div>
+          <div class="file-list" id="ed-file-list"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+        <button class="btn btn-primary" onclick="confirmarEdicaoLancamento('${lancamentoId}','${chamadoId}')">Salvar Alterações</button>
+      </div>
+    </div>`;
+  resetFileStore('ed-files', 'ed-file-list');
+  document.body.appendChild(overlay);
+}
+
+async function removerAnexoDiario(anexoId, storagePath) {
+  if (!confirm('Remover este anexo? Essa ação não pode ser desfeita.')) return;
+  const { error: storageErr } = await sb.storage.from('anexos-diario').remove([storagePath]);
+  const { error: dbErr } = await sb.from('anexos_diario').delete().eq('id', anexoId);
+  if (storageErr || dbErr) {
+    toast('Erro ao remover anexo: ' + (dbErr?.message || storageErr?.message || 'falha desconhecida'), 'error');
+    return;
+  }
+  document.getElementById(`anexo-diario-${anexoId}`)?.remove();
+  toast('Anexo removido');
+}
+
+async function confirmarEdicaoLancamento(lancamentoId, chamadoId) {
+  const tipo = document.getElementById('ed-tipo').value;
+  const data = document.getElementById('ed-data').value;
+  const horas = parseFloat(document.getElementById('ed-horas').value);
+  const descricao = document.getElementById('ed-descricao').value.trim();
+
+  if (!data || !horas || !descricao) { toast('Preencha todos os campos obrigatórios', 'error'); return; }
+
+  const { error } = await sb.from('diario_bordo')
+    .update({ tipo, data_trabalho: data, horas, descricao })
+    .eq('id', lancamentoId);
+
+  if (error) { toast('Erro ao salvar: ' + error.message, 'error'); return; }
+
+  const filesInput = document.getElementById('ed-files');
+  const falhasAnexo = [];
+  for (const file of (filesInput?.files || [])) {
+    const path = `${lancamentoId}/${Date.now()}_${file.name}`;
+    const { error: upErr } = await sb.storage.from('anexos-diario').upload(path, file);
+    if (upErr) { falhasAnexo.push(`${file.name}: ${upErr.message}`); continue; }
+    const { error: insErr } = await sb.from('anexos_diario').insert({ diario_id: lancamentoId, nome_arquivo: file.name, storage_path: path, tamanho_bytes: file.size, tipo_mime: file.type });
+    if (insErr) falhasAnexo.push(`${file.name}: ${insErr.message}`);
+  }
+
+  document.querySelectorAll('.modal-overlay').forEach(o => o.remove());
+  if (falhasAnexo.length) {
+    toast('Lançamento salvo, mas houve erro no(s) anexo(s): ' + falhasAnexo.join(' | '), 'error');
+  } else {
+    toast('Lançamento atualizado');
   }
   navigateTo(currentPage);
 }
