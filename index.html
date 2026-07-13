@@ -1652,7 +1652,7 @@ async function openChamado(id) {
     .select(`*, empresas(nome), setores(nome), tipos_servico(nome), solicitante:solicitante_id(nome,email), engenheiro:engenheiro_id(nome)`)
     .eq('id', id).single();
 
-  const { data: diario } = await sb.from('diario_bordo').select('*').eq('chamado_id', id).order('data_trabalho', {ascending:false});
+  const { data: diario } = await sb.from('diario_bordo').select('*, anexos_diario(*)').eq('chamado_id', id).order('data_trabalho', {ascending:false});
   const { data: historico } = await sb.from('historico_status').select('*, usuario:usuarios(nome)').eq('chamado_id', id).order('criado_em', {ascending:false});
   const { data: anexos } = await sb.from('anexos_chamado').select('*').eq('chamado_id', id);
   const { data: comentarios } = await sb.from('comentarios_chamado').select('*, usuario:usuario_id(nome,email), anexos_comentario(*)').eq('chamado_id', id).order('criado_em', {ascending:true});
@@ -1828,6 +1828,10 @@ async function openChamado(id) {
                 <span class="diario-hours">${d.horas}h</span>
               </div>
               <div class="diario-desc">${d.descricao}</div>
+              ${(d.anexos_diario||[]).length > 0 ? `
+                <div class="file-list" style="margin-top:10px">
+                  ${d.anexos_diario.map(a => `<a href="#" onclick="downloadAnexo('${a.storage_path}','anexos-diario','${a.nome_arquivo}');return false;" style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--accent);text-decoration:none"><span>📎</span> ${a.nome_arquivo}</a>`).join('')}
+                </div>` : ''}
             </div>`).join('')}
         </div>
       </div>
@@ -2023,7 +2027,7 @@ async function abrirRevisarReenviar(id) {
         <div class="form-section">
           <div class="form-section-title">Adicionar Novos Anexos</div>
           <div class="file-upload-area" onclick="document.getElementById('rv-files').click()">
-            <input type="file" id="rv-files" multiple onchange="renderFileList(this,'rv-file-list','rv-files')">
+            <input type="file" id="rv-files" multiple onchange="addFiles(this,'rv-files','rv-file-list')">
             <div class="file-upload-icon">📎</div>
             <div class="file-upload-text">Clique para selecionar arquivos ou arraste aqui<br><span class="text-xs text-muted">Plantas, fotos, documentos</span></div>
           </div>
@@ -2035,6 +2039,7 @@ async function abrirRevisarReenviar(id) {
         <button class="btn btn-primary" onclick="confirmarReenvio('${id}')">Reenviar para Aprovação</button>
       </div>
     </div>`;
+  resetFileStore('rv-files', 'rv-file-list');
   document.body.appendChild(overlay);
 }
 
@@ -2274,6 +2279,7 @@ async function openNovoChamado() {
         <button class="btn btn-primary" onclick="submeterChamado()">Enviar Chamado</button>
       </div>
     </div>`;
+  resetFileStore('nc-files', 'nc-file-list');
   document.body.appendChild(overlay);
 }
 
@@ -2284,21 +2290,45 @@ async function loadSetores(empresaId) {
   setorSel.innerHTML = '<option value="">Selecione...</option>' + (data||[]).map(r => `<option value="${r.setores.id}">${r.setores.nome}</option>`).join('');
 }
 
-function previewFiles(input) {
-  renderFileList(input, 'nc-file-list', 'nc-files');
-}
+// ─── Gestão de arquivos selecionados (acumulativa) ───
+// O navegador SUBSTITUI input.files a cada nova seleção — se o usuário escolhe um
+// arquivo, depois clica de novo e escolhe outro, o primeiro é descartado. Por isso
+// mantemos a lista real aqui e reescrevemos input.files via DataTransfer, para que
+// submeterChamado()/confirmarLancamento()/confirmarReenvio() continuem lendo o input
+// normalmente e recebam TODOS os arquivos acumulados.
+const filesStore = {};
 
-function previewLanFiles(input) {
-  renderFileList(input, 'lan-file-list', 'lan-files');
-}
-
-// Renderiza a lista de arquivos de um <input type="file"> com botão de remover.
-// Usa DataTransfer pra reconstruir o FileList sem o item removido, mantendo o
-// input.files sincronizado — assim submeterChamado()/confirmarLancamento() continuam
-// lendo o input normalmente, sem precisar saber que um item foi removido antes do envio.
-function renderFileList(input, listId, inputId) {
+function resetFileStore(inputId, listId) {
+  filesStore[inputId] = [];
   const list = document.getElementById(listId);
-  list.innerHTML = Array.from(input.files).map((f,i) => `
+  if (list) list.innerHTML = '';
+}
+
+function previewFiles(input) { addFiles(input, 'nc-files', 'nc-file-list'); }
+function previewLanFiles(input) { addFiles(input, 'lan-files', 'lan-file-list'); }
+
+function addFiles(input, inputId, listId) {
+  const atuais = filesStore[inputId] || [];
+  Array.from(input.files).forEach(f => {
+    const jaExiste = atuais.some(e => e.name === f.name && e.size === f.size);
+    if (!jaExiste) atuais.push(f);
+  });
+  filesStore[inputId] = atuais;
+  syncInputFiles(inputId);
+  renderFileList(inputId, listId);
+}
+
+function syncInputFiles(inputId) {
+  const dt = new DataTransfer();
+  (filesStore[inputId] || []).forEach(f => dt.items.add(f));
+  const input = document.getElementById(inputId);
+  if (input) input.files = dt.files;
+}
+
+function renderFileList(inputId, listId) {
+  const list = document.getElementById(listId);
+  if (!list) return;
+  list.innerHTML = (filesStore[inputId] || []).map((f,i) => `
     <div class="file-item">
       <span>📄</span>
       <span class="file-item-name">${f.name}</span>
@@ -2308,11 +2338,9 @@ function renderFileList(input, listId, inputId) {
 }
 
 function removerArquivoSelecionado(inputId, listId, index) {
-  const input = document.getElementById(inputId);
-  const dt = new DataTransfer();
-  Array.from(input.files).forEach((f,i) => { if (i !== index) dt.items.add(f); });
-  input.files = dt.files;
-  renderFileList(input, listId, inputId);
+  filesStore[inputId] = (filesStore[inputId] || []).filter((_,i) => i !== index);
+  syncInputFiles(inputId);
+  renderFileList(inputId, listId);
 }
 
 async function submeterChamado() {
@@ -2421,6 +2449,7 @@ async function openLancamento(chamadoId) {
         <button class="btn btn-primary" onclick="confirmarLancamento('${chamadoId}')">Salvar Lançamento</button>
       </div>
     </div>`;
+  resetFileStore('lan-files', 'lan-file-list');
   document.body.appendChild(overlay);
 }
 
