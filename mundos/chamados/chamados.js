@@ -190,7 +190,7 @@ export async function openChamado(id) {
       acoes = `
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-primary btn-sm" onclick="openLancamento('${id}')">+ Lançar Horas</button>
-          <button class="btn btn-secondary btn-sm" onclick="moverStatus('${id}','revisao','Enviado para revisão')">Enviar para Revisão</button>
+          <button class="btn btn-secondary btn-sm" onclick="confirmarEnvioRevisao('${id}')">Enviar para Revisão</button>
         </div>`;
     }
   }
@@ -199,16 +199,18 @@ export async function openChamado(id) {
     if (c.status === 'rejeitado') {
       acoes = `<button class="btn btn-primary btn-sm" onclick="abrirRevisarReenviar('${id}')">✎ Revisar e Reenviar</button>`;
     }
-    if (c.status === 'revisao') {
-      acoes = `
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-primary btn-sm" onclick="aprovarRevisao('${id}')">✓ Aprovar e Concluir</button>
-          <button class="btn btn-danger btn-sm" onclick="rejeitarRevisao('${id}')">✗ Solicitar Correção</button>
-        </div>`;
-    }
     if (['solicitacao'].includes(c.status)) {
       acoes = `<button class="btn btn-primary btn-sm" onclick="abrirRevisarReenviar('${id}')">✎ Revisar e Reenviar</button>`;
     }
+  }
+
+  // Titularidade do chamado (não perfil): quem abriu decide a revisão, seja solicitante, engenheiro ou gestor.
+  if (c.solicitante_id === currentUser.id && c.status === 'revisao') {
+    acoes = `
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-primary btn-sm" onclick="aprovarRevisao('${id}')">✓ Aprovar e Concluir</button>
+        <button class="btn btn-danger btn-sm" onclick="rejeitarRevisao('${id}')">✗ Solicitar Correção</button>
+      </div>`;
   }
 
   overlay.querySelector('.modal').innerHTML = `
@@ -402,6 +404,11 @@ export async function moverStatus(id, novoStatus, obs) {
   document.querySelector('.modal-overlay')?.remove();
   updateBadges();
   navigateTo(currentPage);
+}
+
+export async function confirmarEnvioRevisao(id) {
+  if (!confirm('Enviar este chamado para revisão do solicitante? O engenheiro não poderá mais lançar horas até a revisão ser concluída.')) return;
+  await moverStatus(id, 'revisao', 'Enviado para revisão');
 }
 
 export async function aprovarChamado(id) {
@@ -618,7 +625,7 @@ export async function confirmarAtribuicao(id) {
 }
 
 export async function aprovarRevisao(id) {
-  await moverStatus(id, 'concluido', 'Aprovado pelo solicitante');
+  await moverStatus(id, 'concluido', 'Revisão aprovada e chamado concluído');
 }
 
 export async function rejeitarRevisao(id) {
@@ -827,7 +834,7 @@ export async function submeterChamado() {
 // Funções chamadas via atributos inline (onclick/onchange) precisam estar em window,
 // pois módulos ES não expõem suas funções no escopo global automaticamente.
 Object.assign(window, {
-  renderChamados, openChamado, moverStatus, aprovarChamado, confirmarAprovacao,
+  renderChamados, openChamado, moverStatus, confirmarEnvioRevisao, aprovarChamado, confirmarAprovacao,
   rejeitarChamado, abrirRevisarReenviar, removerAnexoExistente, confirmarReenvio,
   atribuirEngenheiro, confirmarAtribuicao, aprovarRevisao, rejeitarRevisao,
   confirmarRejeicaoRevisao, enviarCorrecaoEngenheiro, reabrirConcluido, definirPrioridade,
