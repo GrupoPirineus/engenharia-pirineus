@@ -1,5 +1,5 @@
 import { sb } from '../../shared/supabase.js';
-import { setPage, PERFIL_LABELS } from '../../shared/ui.js';
+import { setPage, PERFIL_LABELS, closeSidebar } from '../../shared/ui.js';
 import { isGestor, isMaster, isEngenheiro } from './auth.js';
 import { renderDashboard } from './dashboard.js';
 import { renderChamados, renderMeusChamados, renderMinhaFila } from './chamados.js';
@@ -13,9 +13,7 @@ export let currentPage = null;
 // ═══════════════════════════════════════════════════
 export function setupApp(userData) {
   setPage('app-screen');
-  document.getElementById('user-name-display').textContent = userData.nome;
   document.getElementById('user-role-display').textContent = PERFIL_LABELS[userData.perfil] || userData.perfil;
-  document.getElementById('user-avatar').textContent = userData.nome.charAt(0).toUpperCase();
   buildNav();
   // Recuperar última página visitada
   const savedPage = sessionStorage.getItem('currentPage');
@@ -123,15 +121,10 @@ export function navigateTo(page) {
   }
 }
 
-export function toggleSidebar() {
-  document.getElementById('sidebar').classList.toggle('open');
-  document.getElementById('sidebar-overlay').classList.toggle('show');
-}
-export function closeSidebar() {
-  document.getElementById('sidebar').classList.remove('open');
-  document.getElementById('sidebar-overlay').classList.remove('show');
-}
+// toggleSidebar/closeSidebar agora vivem em shared/ui.js (são da casca, não
+// específicos de Chamados) — navigateTo continua daqui por chamar renderChamados
+// etc., que são deste mundo.
 
 // Funções chamadas via atributos inline (onclick) precisam estar em window,
 // pois módulos ES não expõem suas funções no escopo global automaticamente.
-Object.assign(window, { navigateTo, toggleSidebar, closeSidebar });
+Object.assign(window, { navigateTo });

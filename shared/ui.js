@@ -20,8 +20,27 @@ export const TIPO_LANCAMENTO = { projeto:'Projeto', acompanhamento_obra:'Acompan
 export function show(id) { document.getElementById(id)?.classList.remove('hidden'); }
 export function hide(id) { document.getElementById(id)?.classList.add('hidden'); }
 export function setPage(id) {
-  ['auth-screen','pending-screen','app-screen'].forEach(s => hide(s));
+  ['auth-screen','pending-screen','mundo-seletor-screen','app-screen'].forEach(s => hide(s));
   show(id);
+}
+
+// Sidebar/overlay são parte da casca (compartilhados por todos os mundos), não de um
+// mundo específico — por isso vivem aqui, e não dentro de mundos/chamados.
+export function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sidebar-overlay').classList.toggle('show');
+}
+export function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebar-overlay').classList.remove('show');
+}
+
+// Helper genérico de radio "estilizado" (usado hoje pelo formulário de Novo Chamado).
+export function selectRadio(label) {
+  const group = label.parentElement;
+  group.querySelectorAll('.radio-option').forEach(o => o.classList.remove('checked'));
+  label.classList.add('checked');
+  label.querySelector('input[type="radio"]').checked = true;
 }
 
 export function toast(msg, type='success') {
@@ -116,5 +135,6 @@ export async function downloadAnexo(path, bucket, nome) {
 // Funções chamadas via atributos inline (onclick/onchange) precisam estar em window,
 // pois módulos ES não expõem suas funções no escopo global automaticamente.
 Object.assign(window, {
-  previewFiles, previewLanFiles, addFiles, removerArquivoSelecionado, downloadAnexo
+  previewFiles, previewLanFiles, addFiles, removerArquivoSelecionado, downloadAnexo,
+  toggleSidebar, closeSidebar, selectRadio
 });
