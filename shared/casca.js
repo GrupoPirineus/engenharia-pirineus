@@ -3,6 +3,7 @@ import { obterUsuarioLogado } from './auth.js';
 import { isMaster, temMundo } from './acesso.js';
 import { definirSessaoChamados } from '../mundos/chamados/auth.js';
 import { setupApp as montarMundoChamados } from '../mundos/chamados/nav.js';
+import { definirSessaoInvestimentos } from '../mundos/investimentos/auth.js';
 import { montarMundoInvestimentos } from '../mundos/investimentos/main.js';
 import { montarAdmin } from '../admin/usuarios.js';
 
@@ -77,8 +78,9 @@ export function entrarNoMundo(destino) {
       montarMundoChamados(usuarioAtual);
       break;
     case 'investimentos':
+      definirSessaoInvestimentos(usuarioAtual);
       setPage('app-screen');
-      montarMundoInvestimentos();
+      montarMundoInvestimentos(usuarioAtual);
       break;
     case 'administracao':
       setPage('app-screen');
