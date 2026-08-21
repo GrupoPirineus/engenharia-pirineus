@@ -1,6 +1,7 @@
 import { sb, SUPABASE_URL } from '../shared/supabase.js';
 import { toast, fmtDate } from '../shared/ui.js';
 import { carregarAtribuicoes } from '../shared/acesso.js';
+import { renderAreasDiretorias } from './areas.js';
 
 // ═══════════════════════════════════════════════════
 // ADMINISTRAÇÃO — usuários e atribuições (só isMaster())
@@ -23,20 +24,37 @@ const PAPEIS_POR_MUNDO = {
 };
 
 let filtroAtual = 'todos'; // 'todos' | 'pendentes'
+let secaoAdmin = 'usuarios'; // 'usuarios' | 'areas'
 
 export function montarAdmin() {
-  document.getElementById('sidebar-nav').innerHTML = `
-    <div class="nav-section">
-      <div class="nav-label">Administração</div>
-      <button class="nav-item active" onclick="renderListaUsuarios('${filtroAtual}')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
-        Usuários
-      </button>
-    </div>`;
   document.getElementById('topbar-actions').innerHTML = '';
   document.getElementById('user-role-display').textContent = 'Administrador';
   filtroAtual = 'todos';
+  secaoAdmin = 'usuarios';
+  construirNavAdmin();
   renderListaUsuarios();
+}
+
+function construirNavAdmin() {
+  document.getElementById('sidebar-nav').innerHTML = `
+    <div class="nav-section">
+      <div class="nav-label">Administração</div>
+      <button class="nav-item ${secaoAdmin === 'usuarios' ? 'active' : ''}" onclick="navegarAdmin('usuarios')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+        Usuários
+      </button>
+      <button class="nav-item ${secaoAdmin === 'areas' ? 'active' : ''}" onclick="navegarAdmin('areas')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 9h1m4 0h1m-6 4h1m4 0h1m-6 4h1m4 0h1"/></svg>
+        Áreas e Diretorias
+      </button>
+    </div>`;
+}
+
+export function navegarAdmin(secao) {
+  secaoAdmin = secao;
+  construirNavAdmin();
+  if (secao === 'usuarios') renderListaUsuarios();
+  else renderAreasDiretorias();
 }
 
 export async function renderListaUsuarios(filtro) {
@@ -263,5 +281,5 @@ export async function alternarBloqueioAdmin(userId, nome, bloquear) {
 // pois módulos ES não expõem suas funções no escopo global automaticamente.
 Object.assign(window, {
   renderListaUsuarios, abrirFichaUsuario, atualizarPapeisDoMundo,
-  adicionarAtribuicao, removerAtribuicao, alternarBloqueioAdmin
+  adicionarAtribuicao, removerAtribuicao, alternarBloqueioAdmin, navegarAdmin
 });
