@@ -221,51 +221,84 @@ export async function alternarAtivaDiretoria(id, ativaAtual) {
 }
 
 // ═══════════════════════════════════════════════════
-// ABA · VÍNCULO SETOR → ÁREA (a lista de trabalho do master)
-// Só setores ativos entram aqui — setor desativado não precisa de área.
+// ABA · VÍNCULO SETOR → ÁREA (POR UNIDADE — Etapa 3d)
+// O mesmo setor pode cair em áreas diferentes conforme a unidade (ex.:
+// Expedição = Beneficiamento na Fillercal, Administrativo nas calcárias).
+// O vínculo mora em empresa_setores.area_id, não mais em setores.area_id.
 // ═══════════════════════════════════════════════════
+let empresaVinculoSelecionada = null;
+
 async function montarAbaVinculo() {
   const conteudo = document.getElementById('areas-conteudo');
-  const [{ data: setores, error }, { data: areas }] = await Promise.all([
-    sb.from('setores').select('id,nome,area_id').eq('ativo', true).order('nome'),
-    sb.from('areas').select('id,nome').eq('ativa', true).order('ordem')
-  ]);
-  if (error) { toast('Erro ao carregar setores: ' + error.message, 'error'); return; }
+  const { data: empresas, error } = await sb.from('empresas').select('id,nome').eq('ativo', true).order('nome');
+  if (error) { toast('Erro ao carregar empresas: ' + error.message, 'error'); return; }
 
-  const ordenados = [...(setores || [])].sort((a, b) => (a.area_id ? 1 : 0) - (b.area_id ? 1 : 0));
-  const semArea = ordenados.filter(s => !s.area_id).length;
+  if (empresaVinculoSelecionada && !(empresas || []).some(e => e.id === empresaVinculoSelecionada)) {
+    empresaVinculoSelecionada = null;
+  }
 
   conteudo.innerHTML = `
     <div class="table-card">
       <div class="table-header">
         <div class="table-title">Vínculo Setor → Área</div>
-        ${semArea > 0 ? `<span class="badge badge-pendente">${semArea} setor(es) sem área</span>` : '<span class="badge badge-success">Todos os setores vinculados</span>'}
+        <select id="vinculo-empresa" style="max-width:280px" onchange="selecionarEmpresaVinculo(this.value)">
+          <option value="">— escolha a unidade —</option>
+          ${(empresas || []).map(e => `<option value="${e.id}" ${empresaVinculoSelecionada === e.id ? 'selected' : ''}>${e.nome}</option>`).join('')}
+        </select>
       </div>
-      <div style="overflow-x:auto">
-      <table>
-        <thead><tr><th>Setor</th><th style="width:280px">Área</th></tr></thead>
-        <tbody>
-          ${ordenados.map(s => `
-            <tr style="${!s.area_id ? 'background:var(--orange-dim)' : ''}">
-              <td>${s.nome}</td>
-              <td>
-                <select onchange="mudarAreaDoSetor('${s.id}', this.value)">
-                  <option value="">— sem área —</option>
-                  ${(areas || []).map(a => `<option value="${a.id}" ${s.area_id === a.id ? 'selected' : ''}>${a.nome}</option>`).join('')}
-                </select>
-              </td>
-            </tr>`).join('')}
-        </tbody>
-      </table>
+      <div id="vinculo-setores-da-unidade">
+        ${empresaVinculoSelecionada ? '<div class="loading"><div class="spinner"></div> Carregando...</div>' : '<div class="empty-state"><div class="empty-title">Escolha uma unidade acima</div></div>'}
       </div>
+    </div>`;
+
+  if (empresaVinculoSelecionada) await carregarSetoresDaUnidadeVinculo(empresaVinculoSelecionada);
+}
+
+export async function selecionarEmpresaVinculo(empresaId) {
+  empresaVinculoSelecionada = empresaId || null;
+  montarAbaVinculo();
+}
+
+async function carregarSetoresDaUnidadeVinculo(empresaId) {
+  const alvo = document.getElementById('vinculo-setores-da-unidade');
+  const [{ data: vinculos, error }, { data: areas }] = await Promise.all([
+    sb.from('empresa_setores').select('setor_id,area_id,setores!inner(nome,ativo)').eq('empresa_id', empresaId).eq('setores.ativo', true),
+    sb.from('areas').select('id,nome').eq('ativa', true).order('ordem')
+  ]);
+  if (error) { toast('Erro ao carregar setores da unidade: ' + error.message, 'error'); return; }
+
+  const ordenados = [...(vinculos || [])].sort((a, b) => (a.area_id ? 1 : 0) - (b.area_id ? 1 : 0) || a.setores.nome.localeCompare(b.setores.nome));
+  const semArea = ordenados.filter(v => !v.area_id).length;
+
+  if (!alvo) return;
+  alvo.innerHTML = `
+    <div style="padding:12px 16px 0">
+      ${semArea > 0 ? `<span class="badge badge-pendente">${semArea} setor(es) sem área nesta unidade</span>` : '<span class="badge badge-success">Todos os setores desta unidade vinculados</span>'}
+    </div>
+    <div style="overflow-x:auto">
+    <table>
+      <thead><tr><th>Setor</th><th style="width:280px">Área</th></tr></thead>
+      <tbody>
+        ${ordenados.length === 0 ? `<tr><td colspan="2"><div class="empty-state"><div class="empty-desc">Esta unidade ainda não tem setores. Cadastre em "Unidades e Setores".</div></div></td></tr>` : ordenados.map(v => `
+          <tr style="${!v.area_id ? 'background:var(--orange-dim)' : ''}">
+            <td>${v.setores.nome}</td>
+            <td>
+              <select onchange="mudarAreaDoSetorNaUnidade('${empresaId}','${v.setor_id}', this.value)">
+                <option value="">— sem área —</option>
+                ${(areas || []).map(a => `<option value="${a.id}" ${v.area_id === a.id ? 'selected' : ''}>${a.nome}</option>`).join('')}
+              </select>
+            </td>
+          </tr>`).join('')}
+      </tbody>
+    </table>
     </div>`;
 }
 
-export async function mudarAreaDoSetor(setorId, areaId) {
-  const { error } = await sb.from('setores').update({ area_id: areaId || null }).eq('id', setorId);
+export async function mudarAreaDoSetorNaUnidade(empresaId, setorId, areaId) {
+  const { error } = await sb.from('empresa_setores').update({ area_id: areaId || null }).eq('empresa_id', empresaId).eq('setor_id', setorId);
   if (error) { toast('Erro ao vincular setor: ' + error.message, 'error'); return; }
   toast('Setor vinculado');
-  montarAbaVinculo();
+  carregarSetoresDaUnidadeVinculo(empresaId);
 }
 
 // ═══════════════════════════════════════════════════
@@ -281,7 +314,7 @@ function motivoIncompleto(r) {
 
 async function montarAbaConferencia() {
   const conteudo = document.getElementById('areas-conteudo');
-  const { data: linhas, error } = await sb.from('alcada_por_setor').select('*').order('setor_nome');
+  const { data: linhas, error } = await sb.from('alcada_por_setor').select('*').order('empresa_nome').order('setor_nome');
   if (error) { toast('Erro ao carregar conferência: ' + error.message, 'error'); return; }
 
   const ordenadas = [...(linhas || [])].sort((a, b) => (b.configuracao_incompleta ? 1 : 0) - (a.configuracao_incompleta ? 1 : 0));
@@ -290,15 +323,16 @@ async function montarAbaConferencia() {
   conteudo.innerHTML = `
     <div class="table-card">
       <div class="table-header">
-        <div class="table-title">Conferência · cadeia de alçada por setor</div>
+        <div class="table-title">Conferência · cadeia de alçada por unidade e setor</div>
         ${incompletos > 0 ? `<span class="badge badge-pendente">${incompletos} incompleto(s)</span>` : '<span class="badge badge-success">Tudo configurado</span>'}
       </div>
       <div style="overflow-x:auto">
       <table>
-        <thead><tr><th>Setor</th><th>Área</th><th>Responsável · 1ª alçada</th><th>Diretoria</th><th>Diretor · 2ª alçada</th><th>Status</th></tr></thead>
+        <thead><tr><th>Empresa</th><th>Setor</th><th>Área</th><th>Responsável · 1ª alçada</th><th>Diretoria</th><th>Diretor · 2ª alçada</th><th>Status</th></tr></thead>
         <tbody>
           ${ordenadas.map(r => `
             <tr style="${r.configuracao_incompleta ? 'background:var(--orange-dim)' : ''}">
+              <td>${r.empresa_nome || '<span class="text-muted">—</span>'}</td>
               <td>${r.setor_nome}</td>
               <td>${r.area_nome || '<span class="text-muted">—</span>'}</td>
               <td>${r.responsavel_nome || '<span class="text-muted">—</span>'}</td>
@@ -316,5 +350,6 @@ async function montarAbaConferencia() {
 // pois módulos ES não expõem suas funções no escopo global automaticamente.
 Object.assign(window, {
   renderAreasDiretorias, abrirFormArea, salvarArea, alternarAtivaArea,
-  abrirFormDiretoria, salvarDiretoria, alternarAtivaDiretoria, mudarAreaDoSetor
+  abrirFormDiretoria, salvarDiretoria, alternarAtivaDiretoria,
+  selecionarEmpresaVinculo, mudarAreaDoSetorNaUnidade
 });

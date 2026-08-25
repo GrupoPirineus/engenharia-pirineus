@@ -2,6 +2,7 @@ import { sb, SUPABASE_URL } from '../shared/supabase.js';
 import { toast, fmtDate } from '../shared/ui.js';
 import { carregarAtribuicoes } from '../shared/acesso.js';
 import { renderAreasDiretorias } from './areas.js';
+import { renderUnidadesSetores } from './unidades.js';
 
 // ═══════════════════════════════════════════════════
 // ADMINISTRAÇÃO — usuários e atribuições (só isMaster())
@@ -24,7 +25,7 @@ const PAPEIS_POR_MUNDO = {
 };
 
 let filtroAtual = 'todos'; // 'todos' | 'pendentes'
-let secaoAdmin = 'usuarios'; // 'usuarios' | 'areas'
+let secaoAdmin = 'usuarios'; // 'usuarios' | 'areas' | 'unidades'
 
 export function montarAdmin() {
   document.getElementById('topbar-actions').innerHTML = '';
@@ -47,6 +48,10 @@ function construirNavAdmin() {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 9h1m4 0h1m-6 4h1m4 0h1m-6 4h1m4 0h1"/></svg>
         Áreas e Diretorias
       </button>
+      <button class="nav-item ${secaoAdmin === 'unidades' ? 'active' : ''}" onclick="navegarAdmin('unidades')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        Unidades e Setores
+      </button>
     </div>`;
 }
 
@@ -54,7 +59,8 @@ export function navegarAdmin(secao) {
   secaoAdmin = secao;
   construirNavAdmin();
   if (secao === 'usuarios') renderListaUsuarios();
-  else renderAreasDiretorias();
+  else if (secao === 'areas') renderAreasDiretorias();
+  else renderUnidadesSetores();
 }
 
 export async function renderListaUsuarios(filtro) {
