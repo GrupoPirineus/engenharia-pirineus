@@ -56,7 +56,7 @@ export async function renderMeusPais() {
         <thead><tr><th>Número</th><th>Título</th><th>Empresa</th><th>Área</th><th>Ano</th><th>Tipo</th><th class="text-right">Valor</th><th>Status</th><th>Criado em</th></tr></thead>
         <tbody>
           ${(pais || []).map(p => `
-            <tr onclick="${p.status === 'rascunho' ? `abrirNovoPai('${p.id}')` : ''}" style="${p.status === 'rascunho' ? 'cursor:pointer' : ''}">
+            <tr onclick="${['rascunho', 'devolvido'].includes(p.status) ? `abrirNovoPai('${p.id}')` : ''}" style="${['rascunho', 'devolvido'].includes(p.status) ? 'cursor:pointer' : ''}">
               <td><span class="font-mono text-xs" style="color:var(--accent)">${p.numero || '— rascunho —'}</span></td>
               <td><strong>${p.titulo || '—'}</strong></td>
               <td><span class="text-muted text-sm">${p.empresas?.nome || '—'}</span></td>

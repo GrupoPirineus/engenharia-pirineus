@@ -3,6 +3,7 @@ import { toast } from '../../shared/ui.js';
 import { carregarAtribuicoes } from '../../shared/acesso.js';
 import { currentUser } from './auth.js';
 import { renderMeusPais, fmtMoeda, TIPO_INVESTIMENTO_LABELS } from './dashboard.js';
+import { iniciarEtapaControladoria } from './aprovacao.js';
 
 // Bucket reaproveitado do mundo Chamados (mesmo Supabase Storage do projeto),
 // com prefixo próprio para não colidir com os anexos de chamado.
@@ -70,6 +71,7 @@ export async function abrirNovoPai(paiId) {
   estado = {
     paiId: null,
     planoId: null,
+    statusOriginal: null, // null (novo) | 'rascunho' | 'devolvido' — define o de_status do histórico ao enviar
     escopoIdx: 0,
     escopos,
     ano: anoVigente(),
@@ -79,23 +81,39 @@ export async function abrirNovoPai(paiId) {
     linhas: [],
     itens: [{ aplicacao: '', valor: 0 }],
     anexos: { a3: null, viabilidade: null, orcamento: null },
+    anexosExistentes: { a3: null, viabilidade: null, orcamento: null }, // já enviados num ciclo anterior (reenvio após devolução)
+    vinculosIniciais: {}, // linha_id -> valor, de um ciclo anterior (reenvio após devolução)
   };
 
   if (paiId) {
     const { data: pai, error } = await sb.from('pais').select('*')
-      .eq('id', paiId).eq('solicitante_id', currentUser.id).eq('status', 'rascunho').single();
+      .eq('id', paiId).eq('solicitante_id', currentUser.id).in('status', ['rascunho', 'devolvido']).single();
     if (!error && pai) {
       estado.paiId = pai.id;
+      estado.statusOriginal = pai.status;
       estado.ano = pai.ano_calendario;
       estado.tipo = pai.tipo;
       estado.titulo = pai.titulo || '';
       estado.descricao = pai.descricao || '';
       const idx = escopos.findIndex(e => e.empresaId === pai.empresa_id && e.setorId === pai.setor_id);
       if (idx >= 0) estado.escopoIdx = idx;
+
+      if (pai.status === 'devolvido') {
+        // Reenvio: traz de volta a composição, os vínculos e os anexos do envio anterior.
+        const [{ data: itens }, { data: vinculos }, { data: anexos }] = await Promise.all([
+          sb.from('itens_pai').select('*').eq('pai_id', pai.id).order('ordem'),
+          sb.from('vinculos_verba').select('*').eq('pai_id', pai.id),
+          sb.from('anexos_pai').select('*').eq('pai_id', pai.id)
+        ]);
+        if (itens?.length) estado.itens = itens.map(i => ({ aplicacao: i.aplicacao, valor: i.valor }));
+        (vinculos || []).forEach(v => { estado.vinculosIniciais[v.linha_id] = v.valor; });
+        (anexos || []).forEach(a => { if (a.tipo in estado.anexosExistentes) estado.anexosExistentes[a.tipo] = a; });
+      }
     }
   }
 
   await carregarLinhas();
+  estado.linhas.forEach(l => { if (!l.usar && estado.vinculosIniciais[l.linhaId]) l.usar = estado.vinculosIniciais[l.linhaId]; });
   render();
 }
 
@@ -133,7 +151,7 @@ function calcular() {
   const somaBate = totalUsar > 0 && Math.abs(totalComposicao - totalUsar) < 0.01;
   const itensOk = estado.itens.length > 0 && estado.itens.every(i => i.aplicacao.trim() && numOrZero(i.valor) > 0);
   const temDescricao = estado.titulo.trim().length > 0 && estado.descricao.trim().length > 0;
-  const temAnexos = !!(estado.anexos.a3 && estado.anexos.viabilidade);
+  const temAnexos = !!((estado.anexos.a3 || estado.anexosExistentes.a3) && (estado.anexos.viabilidade || estado.anexosExistentes.viabilidade));
 
   const checks = [
     { ok: temDescricao, texto: 'Título e descrição preenchidos' },
@@ -310,13 +328,15 @@ function renderLinhasItens() {
 
 function renderBotaoAnexo(chave) {
   const arquivo = estado.anexos[chave];
-  const on = !!arquivo;
+  const existente = estado.anexosExistentes[chave];
+  const on = !!(arquivo || existente);
+  const rotulo = arquivo ? '✓ ' + arquivo.name : existente ? '✓ ' + existente.nome_arquivo + ' (enviado antes — clique para substituir)' : '📎 ' + LABELS_ANEXO[chave];
   return `
     <div>
       <input type="file" id="anexo-input-${chave}" style="display:none" onchange="onAnexoSelecionado('${chave}', this.files[0])">
       <button type="button" class="btn btn-secondary btn-full" id="anexo-btn-${chave}" onclick="document.getElementById('anexo-input-${chave}').click()"
         style="justify-content:flex-start;border-color:${on ? 'var(--accent)' : 'var(--border)'};background:${on ? 'var(--accent-dim)' : 'var(--surface)'}">
-        ${on ? '✓ ' + arquivo.name : '📎 ' + LABELS_ANEXO[chave]}
+        ${rotulo}
       </button>
     </div>`;
 }
@@ -439,12 +459,24 @@ async function onEnviarPai() {
   if (!estado.planoId) { toast('Nenhum plano carregado para esta empresa/ano ainda', 'error'); return; }
 
   const esc = estado.escopos[estado.escopoIdx];
-  const { data: numero, error: erroNumero } = await sb.rpc('gerar_numero_pai', { p_ano: estado.ano });
-  if (erroNumero) { toast('Erro ao gerar número do PAI: ' + erroNumero.message, 'error'); return; }
+  const reenvio = estado.statusOriginal === 'devolvido';
+
+  // Reenvio após devolução: é o mesmo PAI, mantém o número já emitido —
+  // só um PAI novo (ou um rascunho sem número ainda) gera um número novo.
+  let numero;
+  if (reenvio) {
+    const { data: paiAtual, error: erroPaiAtual } = await sb.from('pais').select('numero').eq('id', estado.paiId).single();
+    if (erroPaiAtual) { toast('Erro ao carregar número do PAI: ' + erroPaiAtual.message, 'error'); return; }
+    numero = paiAtual.numero;
+  } else {
+    const { data: numeroGerado, error: erroNumero } = await sb.rpc('gerar_numero_pai', { p_ano: estado.ano });
+    if (erroNumero) { toast('Erro ao gerar número do PAI: ' + erroNumero.message, 'error'); return; }
+    numero = numeroGerado;
+  }
 
   const agora = new Date();
   const reservaExpira = new Date(agora.getTime() + 30 * 24 * 60 * 60 * 1000);
-  const statusAnterior = estado.paiId ? 'rascunho' : null;
+  const statusAnterior = estado.statusOriginal; // null (novo) | 'rascunho' | 'devolvido'
 
   const payload = {
     numero, plano_id: estado.planoId, empresa_id: esc.empresaId, setor_id: esc.setorId, ano_calendario: estado.ano,
@@ -464,6 +496,13 @@ async function onEnviarPai() {
   }
   if (erroPai) { toast('Erro ao enviar PAI: ' + erroPai.message, 'error'); return; }
 
+  // Reenvio após devolução: a composição e os vínculos do ciclo anterior são
+  // substituídos pelos atuais (o solicitante pode ter ajustado quantidades/itens).
+  if (reenvio) {
+    await sb.from('vinculos_verba').delete().eq('pai_id', paiId);
+    await sb.from('itens_pai').delete().eq('pai_id', paiId);
+  }
+
   const vinculos = estado.linhas.filter(l => numOrZero(l.usar) > 0).map(l => ({ pai_id: paiId, linha_id: l.linhaId, valor: l.usar }));
   const { error: erroVinculos } = await sb.from('vinculos_verba').insert(vinculos);
   if (erroVinculos) { toast('PAI criado, mas houve erro ao vincular verba: ' + erroVinculos.message, 'error'); return; }
@@ -475,6 +514,12 @@ async function onEnviarPai() {
   const falhasAnexo = [];
   for (const [tipo, file] of Object.entries(estado.anexos)) {
     if (!file) continue;
+    // Substituindo um anexo já enviado num ciclo anterior: remove o antigo primeiro.
+    const antigo = estado.anexosExistentes[tipo];
+    if (antigo) {
+      await sb.storage.from(BUCKET_ANEXOS).remove([antigo.storage_path]);
+      await sb.from('anexos_pai').delete().eq('id', antigo.id);
+    }
     const path = `pai/${paiId}/${Date.now()}_${file.name}`;
     const { error: erroUpload } = await sb.storage.from(BUCKET_ANEXOS).upload(path, file);
     if (erroUpload) { falhasAnexo.push(`${file.name}: ${erroUpload.message}`); continue; }
@@ -484,8 +529,9 @@ async function onEnviarPai() {
 
   await sb.from('historico_pai').insert({
     pai_id: paiId, usuario_id: currentUser.id, de_status: statusAnterior, para_status: 'em_critica',
-    observacao: 'PAI enviado à Controladoria', criado_em: agora.toISOString()
+    observacao: reenvio ? 'PAI ajustado e reenviado à Controladoria' : 'PAI enviado à Controladoria', criado_em: agora.toISOString()
   });
+  await iniciarEtapaControladoria(paiId);
 
   if (falhasAnexo.length) toast(`PAI ${numero} enviado, mas houve erro no(s) anexo(s): ` + falhasAnexo.join(' | '), 'error');
   else toast(`PAI ${numero} enviado com sucesso! Verba reservada por 30 dias.`);
