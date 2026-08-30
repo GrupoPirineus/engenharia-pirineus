@@ -141,6 +141,52 @@ function somaAreaAtiva(areaId, excluirLinhaId) {
     .reduce((a, l) => a + l.valor, 0);
 }
 
+// Legenda "Setor · Área · livre R$X" mostrada abaixo do select de setor —
+// deixa claro de qual bolo a linha vai debitar antes de digitar o valor.
+// Em rascunho ainda não existe teto, então some só "Setor · Área".
+// excluirLinhaId tira a própria linha da soma do "ativo" (usado no preview
+// ao trocar de setor, antes de persistir — a linha ainda não está lá).
+function legendaAreaSetor(setorInfo, excluirLinhaId = null) {
+  if (!setorInfo) return '';
+  if (!setorInfo.areaId) return `${setorInfo.setorNome} · sem área vinculada`;
+  if (estado.status !== 'aprovado') return `${setorInfo.setorNome} · ${setorInfo.areaNome}`;
+  const teto = estado.tetoPorArea[setorInfo.areaId] ?? 0;
+  const ativa = somaAreaAtiva(setorInfo.areaId, excluirLinhaId);
+  const livre = teto - ativa;
+  return `${setorInfo.setorNome} · ${setorInfo.areaNome} · livre ${fmtMoeda(livre)}`;
+}
+
+// ═══════════════════════════════════════════════════
+// MODAL DE CONFIRMAÇÃO (substitui confirm() nativo — mesmo padrão visual
+// dos outros modais da tela: .modal-overlay/.modal)
+// ═══════════════════════════════════════════════════
+function abrirModalConfirmacao({ titulo, mensagem, textoBotao = 'Confirmar', variante = 'btn-primary', aoConfirmar }) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'modal-confirmacao-plano';
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:440px">
+      <div class="modal-header">
+        <h2>${titulo}</h2>
+        <button class="close-btn" onclick="this.closest('.modal-overlay').remove()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p style="color:var(--text2);line-height:1.6;font-size:13px">${mensagem}</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+        <button class="btn ${variante}" id="btn-confirmar-modal-plano">${textoBotao}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('btn-confirmar-modal-plano').onclick = async () => {
+    overlay.remove();
+    await aoConfirmar();
+  };
+}
+
 // ═══════════════════════════════════════════════════
 // RENDER
 // ═══════════════════════════════════════════════════
@@ -276,6 +322,7 @@ function renderLinhasTabela() {
         <select ${editavel ? '' : 'disabled'} onchange="onSetorLinhaChange('${l.id}', this.value)">
           ${estado.setoresDaEmpresa.map(s => `<option value="${s.setorId}" ${s.setorId === l.setorId ? 'selected' : ''}>${s.setorNome}</option>`).join('')}
         </select>
+        <div id="legenda-setor-${l.id}" class="text-xs text-muted" style="margin-top:4px">${legendaAreaSetor(l)}</div>
       </td>
       <td><input type="text" value="${l.descricao}" placeholder="ex.: Britagem — expansão" ${editavel ? '' : 'disabled'} onchange="onDescricaoLinhaChange('${l.id}', this.value)"></td>
       <td><input type="number" min="${l.reservado || 0}" step="0.01" value="${l.valor || ''}" placeholder="0" ${editavel ? '' : 'disabled'} onchange="onValorLinhaChange('${l.id}', this.value)"></td>
@@ -324,12 +371,19 @@ async function onSetorLinhaChange(linhaId, setorId) {
   const linha = estado.linhas.find(l => l.id === linhaId);
   if (!linha || !linhaEditavel(linha)) { toast('Esta linha não pode mais ser editada.', 'error'); render(); return; }
 
+  const novoSetor = estado.setoresDaEmpresa.find(s => s.setorId === setorId);
+
+  // Feedback imediato: mostra a área/livre do setor recém-escolhido antes
+  // mesmo de confirmar a gravação.
+  const legendaEl = document.getElementById(`legenda-setor-${linhaId}`);
+  if (legendaEl) legendaEl.textContent = legendaAreaSetor(novoSetor, linhaId);
+
   if (estado.status === 'aprovado') {
-    const novoSetor = estado.setoresDaEmpresa.find(s => s.setorId === setorId);
     const teto = novoSetor?.areaId ? (estado.tetoPorArea[novoSetor.areaId] ?? 0) : Infinity;
     const somaSemEsta = somaAreaAtiva(novoSetor?.areaId, linhaId);
+    const livre = teto - somaSemEsta;
     if (somaSemEsta + linha.valor > teto + 1e-9) {
-      toast(`Mudar para este setor estouraria o teto da área (${fmtMoeda(teto)}). Solicite aumento de verba (próxima etapa).`, 'error');
+      toast(`Estouraria o teto de ${novoSetor?.areaNome || 'área'} (livre ${fmtMoeda(livre)}). Reduza o valor ou solicite aumento de verba.`, 'error');
       render();
       return;
     }
@@ -363,8 +417,9 @@ async function onValorLinhaChange(linhaId, valor) {
   if (estado.status === 'aprovado') {
     const teto = linha.areaId ? (estado.tetoPorArea[linha.areaId] ?? 0) : Infinity;
     const somaSemEsta = somaAreaAtiva(linha.areaId, linhaId);
+    const livre = teto - somaSemEsta;
     if (somaSemEsta + novoValor > teto + 1e-9) {
-      toast(`Estouraria o teto da área (${fmtMoeda(teto)}). Reduza o valor ou solicite aumento de verba (próxima etapa).`, 'error');
+      toast(`Estouraria o teto de ${linha.areaNome || 'área'} (livre ${fmtMoeda(livre)}). Reduza o valor ou solicite aumento de verba.`, 'error');
       render();
       return;
     }
@@ -377,13 +432,20 @@ async function onValorLinhaChange(linhaId, valor) {
 }
 
 // Remoção de verdade — só existe enquanto o plano é rascunho.
-async function onRemoverLinha(linhaId) {
+function onRemoverLinha(linhaId) {
   if (estado.status !== 'rascunho') { toast('Plano já publicado — cancele a linha em vez de remover.', 'error'); return; }
-  if (!confirm('Remover esta linha do plano?')) return;
-  const { error } = await sb.from('linhas_plano').delete().eq('id', linhaId);
-  if (error) { toast('Erro ao remover linha: ' + error.message, 'error'); return; }
-  await carregarLinhas();
-  render();
+  abrirModalConfirmacao({
+    titulo: 'Remover linha',
+    mensagem: 'Remover esta linha do plano? Essa ação não pode ser desfeita.',
+    textoBotao: 'Remover',
+    variante: 'btn-danger',
+    aoConfirmar: async () => {
+      const { error } = await sb.from('linhas_plano').delete().eq('id', linhaId);
+      if (error) { toast('Erro ao remover linha: ' + error.message, 'error'); return; }
+      await carregarLinhas();
+      render();
+    }
+  });
 }
 
 // Cancelamento (soft, com motivo) — a única forma de tirar uma linha do
@@ -403,7 +465,8 @@ function onAbrirCancelarLinha(linhaId) {
       </div>
       <div class="modal-body">
         <div class="text-sm text-muted" style="margin-bottom:12px">${linha.setorNome} · ${linha.descricao || '(sem descrição)'} · ${fmtMoeda(linha.valor)}</div>
-        <div class="field"><label>Motivo *</label><textarea id="cancelar-linha-motivo" rows="3" placeholder="Explique por que esta linha está sendo cancelada..."></textarea></div>
+        <div class="field"><label>Motivo *</label><textarea id="cancelar-linha-motivo" rows="3" placeholder="Explique por que esta linha está sendo cancelada..." oninput="document.getElementById('cancelar-linha-erro').textContent=''"></textarea></div>
+        <div id="cancelar-linha-erro" class="text-xs" style="color:var(--red);margin-top:-8px"></div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Voltar</button>
@@ -415,7 +478,9 @@ function onAbrirCancelarLinha(linhaId) {
 
 async function onConfirmarCancelarLinha(linhaId) {
   const motivo = document.getElementById('cancelar-linha-motivo').value.trim();
-  if (!motivo) { toast('Explique o motivo do cancelamento', 'error'); return; }
+  const erroEl = document.getElementById('cancelar-linha-erro');
+  if (!motivo) { if (erroEl) erroEl.textContent = 'Explique o motivo do cancelamento.'; return; }
+  if (erroEl) erroEl.textContent = '';
 
   const { error } = await sb.from('linhas_plano').update({
     cancelada: true, cancelada_motivo: motivo, cancelada_por: currentUser.id, cancelada_em: new Date().toISOString()
@@ -428,10 +493,21 @@ async function onConfirmarCancelarLinha(linhaId) {
   render();
 }
 
-async function onPublicarPlano() {
+function onPublicarPlano() {
   const ativas = estado.linhas.filter(l => !l.cancelada);
   if (ativas.length === 0) { toast('Adicione ao menos uma linha ativa antes de publicar', 'error'); return; }
-  if (!confirm(`Publicar o plano de ${estado.ano}? A partir daí, o teto de cada área fica congelado e o plano passa a ficar disponível para solicitação de PAI.`)) return;
+
+  abrirModalConfirmacao({
+    titulo: 'Publicar plano',
+    mensagem: `Publicar o plano de ${estado.ano}? O teto de cada área fica congelado a partir de agora, e o plano passa a ficar disponível para solicitação de PAI.`,
+    textoBotao: 'Publicar plano',
+    variante: 'btn-primary',
+    aoConfirmar: publicarPlanoConfirmado
+  });
+}
+
+async function publicarPlanoConfirmado() {
+  const ativas = estado.linhas.filter(l => !l.cancelada);
 
   // Congela o teto por área = soma das linhas ativas de cada área agora.
   const tetoPorArea = {};
