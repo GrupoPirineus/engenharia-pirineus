@@ -213,7 +213,7 @@ function render() {
     <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:8px">
       <div>
         <button class="btn btn-secondary btn-sm" onclick="renderMeusPais()" style="margin-bottom:12px">← Meus PAIs</button>
-        <div class="text-xs" style="color:var(--accent);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px">Rascunho · o nº é gerado no envio</div>
+        <div class="text-xs" style="color:var(--accent);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px">Processo para abertura de investimento - PAI</div>
         <h2 style="font-size:24px;margin:0">Novo PAI</h2>
       </div>
       <div class="text-sm text-muted">${currentUser.nome} · Solicitante · ${esc.empresaNome} · ${esc.setorNome}</div>
@@ -235,14 +235,6 @@ function render() {
             <div class="field"><label>Área</label><input value="${esc.setorNome}" disabled></div>`}
           </div>
 
-          <div class="field">
-            <label>Valor total do investimento *</label>
-            <input type="number" min="0" step="0.01" id="pai-valor-total" value="${estado.valorTotal || ''}" placeholder="0"
-              oninput="onValorTotalInput(this.value)"
-              style="font-size:28px;font-weight:700;color:${c.semSaldo ? 'var(--red)' : 'var(--text)'};height:auto;padding:10px 14px">
-            <div id="valor-total-status" style="margin-top:8px">${renderStatusSaldo(c)}</div>
-          </div>
-
           <div class="form-row">
             <div class="field"><label>Ano-calendário do plano</label>
               <select id="pai-ano" onchange="onAnoChange(this.value)">
@@ -257,6 +249,18 @@ function render() {
               </select>
             </div>
           </div>
+
+          <div class="form-row">
+            <div class="field">
+              <label>Valor total do investimento *</label>
+              <input type="number" min="0" step="0.01" id="pai-valor-total" value="${estado.valorTotal || ''}" placeholder="0"
+                oninput="onValorTotalInput(this.value)"
+                style="font-size:28px;font-weight:700;color:${c.semSaldo ? 'var(--red)' : 'var(--text)'};height:auto;padding:10px 14px">
+              <div id="valor-total-status" style="margin-top:8px">${renderStatusSaldo(c)}</div>
+            </div>
+            <div></div>
+          </div>
+
           <div class="field">
             <label>Título *</label>
             <input type="text" id="pai-titulo" value="${estado.titulo}" oninput="onTituloInput(this.value)" placeholder="ex.: Correia transportadora da britagem">
