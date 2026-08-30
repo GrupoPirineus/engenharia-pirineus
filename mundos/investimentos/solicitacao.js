@@ -77,6 +77,7 @@ export async function abrirNovoPai(paiId) {
   estado = {
     paiId: null,
     planoId: null,
+    planoRascunho: false, // true quando existe plano para empresa/ano mas ainda não foi publicado
     areaId: null, // resolvido por área_do_setor_emp — null se o setor ainda não está vinculado a uma área
     statusOriginal: null, // null (novo) | 'rascunho' | 'devolvido' — define o de_status do histórico ao enviar
     escopoIdx: 0,
@@ -138,6 +139,21 @@ async function carregarLinhas() {
   if (erroArea) console.error('Erro ao resolver área do setor:', erroArea);
   estado.areaId = areaId || null;
 
+  // saldo_linhas não filtra por status do plano (ela só junta linhas_plano
+  // com planos_investimento pelo plano_id) — um plano em rascunho ainda não
+  // é "verba disponível". Confirmamos aqui, na aplicação, antes de confiar
+  // no que a view devolve.
+  const { data: plano, error: erroPlano } = await sb.from('planos_investimento').select('id,status')
+    .eq('empresa_id', esc.empresaId).eq('ano_calendario', estado.ano).maybeSingle();
+  if (erroPlano) console.error('Erro ao carregar plano de investimento:', erroPlano);
+
+  estado.planoRascunho = !!plano && plano.status !== 'aprovado';
+  if (!plano || plano.status !== 'aprovado') {
+    estado.linhas = [];
+    estado.planoId = null;
+    return;
+  }
+
   let query = sb.from('saldo_linhas').select('*').eq('empresa_id', esc.empresaId).eq('ano_calendario', estado.ano);
   query = estado.areaId ? query.eq('area_id', estado.areaId) : query.eq('setor_id', esc.setorId);
   const { data, error } = await query.order('descricao');
@@ -150,9 +166,7 @@ async function carregarLinhas() {
     linhaId: l.linha_id, descricao: l.descricao, aprovado: l.aprovado, reservado: l.reservado,
     livre: l.livre, usar: usoAnterior[l.linha_id] || 0
   }));
-  // Um plano é por empresa+ano (sem escopo de área), então toda linha da
-  // consulta acima compartilha o mesmo plano_id — basta pegar da primeira.
-  estado.planoId = data && data.length ? data[0].plano_id : null;
+  estado.planoId = plano.id;
 }
 
 // ═══════════════════════════════════════════════════
@@ -280,7 +294,7 @@ function render() {
           ${estado.linhas.length === 0 ? `
           <div class="empty-state" style="padding:24px">
             <div class="empty-icon" style="font-size:24px">📭</div>
-            <div class="empty-desc">Nenhuma linha aprovada para esta área em ${estado.ano}.</div>
+            <div class="empty-desc">${estado.planoRascunho ? `O plano de ${estado.ano} desta empresa ainda está em elaboração pela Controladoria Operacional (rascunho) — fale com eles.` : `Nenhuma linha aprovada para esta área em ${estado.ano}.`}</div>
           </div>` : `
           <div style="overflow-x:auto">
           <table>

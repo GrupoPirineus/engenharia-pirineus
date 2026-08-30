@@ -4,6 +4,7 @@
 import { temPapel } from '../../shared/acesso.js';
 import { renderMeusPais } from './dashboard.js';
 import { renderFilaControladoria, renderFilaAprovador, renderFilaDiretor } from './aprovacao.js';
+import { renderPlanoInvestimento } from './plano.js';
 
 export async function montarMundoInvestimentos(usuario) {
   document.getElementById('topbar-title').textContent = 'Investimentos';
@@ -34,6 +35,10 @@ export async function montarMundoInvestimentos(usuario) {
       <button class="nav-item" onclick="renderFilaControladoria()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
         Fila · Controladoria
+      </button>
+      <button class="nav-item" onclick="renderPlanoInvestimento()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 21H3M6 21V10M12 21V4M18 21v-7"/></svg>
+        Plano de Investimento
       </button>` : ''}
       ${souAprovador ? `
       <button class="nav-item" onclick="renderFilaAprovador()">
