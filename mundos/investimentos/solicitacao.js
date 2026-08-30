@@ -2,7 +2,7 @@ import { sb } from '../../shared/supabase.js';
 import { toast } from '../../shared/ui.js';
 import { carregarAtribuicoes } from '../../shared/acesso.js';
 import { currentUser } from './auth.js';
-import { renderMeusPais, fmtMoeda, TIPO_INVESTIMENTO_LABELS } from './dashboard.js';
+import { renderMeusPais, fmtMoeda } from './dashboard.js';
 import { iniciarEtapaControladoria } from './aprovacao.js';
 
 // Bucket reaproveitado do mundo Chamados (mesmo Supabase Storage do projeto),
@@ -48,6 +48,12 @@ async function resolverEscoposSolicitante() {
   });
 }
 
+async function carregarTiposInvestimento() {
+  const { data, error } = await sb.from('tipos_investimento').select('*').eq('ativo', true).order('ordem');
+  if (error) { console.error('Erro ao carregar tipos de investimento:', error); return []; }
+  return data || [];
+}
+
 // ═══════════════════════════════════════════════════
 // ABERTURA DA TELA
 // ═══════════════════════════════════════════════════
@@ -57,7 +63,7 @@ export async function abrirNovoPai(paiId) {
   const page = document.getElementById('page-content');
   page.innerHTML = '<div class="loading"><div class="spinner"></div> Carregando...</div>';
 
-  const escopos = await resolverEscoposSolicitante();
+  const [escopos, tiposInvestimento] = await Promise.all([resolverEscoposSolicitante(), carregarTiposInvestimento()]);
   if (!escopos.length) {
     page.innerHTML = `
       <div class="empty-state">
@@ -71,11 +77,14 @@ export async function abrirNovoPai(paiId) {
   estado = {
     paiId: null,
     planoId: null,
+    areaId: null, // resolvido por área_do_setor_emp — null se o setor ainda não está vinculado a uma área
     statusOriginal: null, // null (novo) | 'rascunho' | 'devolvido' — define o de_status do histórico ao enviar
     escopoIdx: 0,
     escopos,
+    tiposInvestimento,
     ano: anoVigente(),
-    tipo: 'obra',
+    tipo: tiposInvestimento[0]?.nome || '',
+    valorTotal: 0,
     titulo: '',
     descricao: '',
     linhas: [],
@@ -93,6 +102,7 @@ export async function abrirNovoPai(paiId) {
       estado.statusOriginal = pai.status;
       estado.ano = pai.ano_calendario;
       estado.tipo = pai.tipo;
+      estado.valorTotal = numOrZero(pai.valor_total);
       estado.titulo = pai.titulo || '';
       estado.descricao = pai.descricao || '';
       const idx = escopos.findIndex(e => e.empresaId === pai.empresa_id && e.setorId === pai.setor_id);
@@ -117,11 +127,20 @@ export async function abrirNovoPai(paiId) {
   render();
 }
 
+// Linhas do plano = a origem do dinheiro. Desde a Etapa 3d o bolo é por
+// ÁREA (pode juntar vários setores da mesma unidade) — resolvemos a área
+// do setor do solicitante e listamos todas as linhas dela; se o setor
+// ainda não foi vinculado a uma área (configuração pendente no admin),
+// caímos de volta para só as linhas do próprio setor.
 async function carregarLinhas() {
   const esc = estado.escopos[estado.escopoIdx];
-  const { data, error } = await sb.from('saldo_linhas').select('*')
-    .eq('empresa_id', esc.empresaId).eq('setor_id', esc.setorId).eq('ano_calendario', estado.ano)
-    .order('descricao');
+  const { data: areaId, error: erroArea } = await sb.rpc('area_do_setor_emp', { p_empresa: esc.empresaId, p_setor: esc.setorId });
+  if (erroArea) console.error('Erro ao resolver área do setor:', erroArea);
+  estado.areaId = areaId || null;
+
+  let query = sb.from('saldo_linhas').select('*').eq('empresa_id', esc.empresaId).eq('ano_calendario', estado.ano);
+  query = estado.areaId ? query.eq('area_id', estado.areaId) : query.eq('setor_id', esc.setorId);
+  const { data, error } = await query.order('descricao');
 
   if (error) { toast('Erro ao carregar linhas do plano: ' + error.message, 'error'); estado.linhas = []; estado.planoId = null; return; }
 
@@ -137,34 +156,48 @@ async function carregarLinhas() {
 }
 
 // ═══════════════════════════════════════════════════
-// CÁLCULO DERIVADO (checklist, somas, saldo)
+// CÁLCULO DERIVADO (checklist, somas, saldo) — tudo ancorado no valor total
 // ═══════════════════════════════════════════════════
 function calcular() {
-  const totalUsar = estado.linhas.reduce((a, l) => a + numOrZero(l.usar), 0);
+  const valorTotal = numOrZero(estado.valorTotal);
+  const totalLinhas = estado.linhas.reduce((a, l) => a + numOrZero(l.usar), 0);
   const totalComposicao = estado.itens.reduce((a, i) => a + numOrZero(i.valor), 0);
   const estouraLinha = estado.linhas.some(l => numOrZero(l.usar) > l.livre + 1e-9);
   const somaAprovado = estado.linhas.reduce((a, l) => a + numOrZero(l.aprovado), 0);
   const somaReservado = estado.linhas.reduce((a, l) => a + numOrZero(l.reservado), 0);
   const somaLivre = estado.linhas.reduce((a, l) => a + numOrZero(l.livre), 0);
-  const livreApos = somaLivre - totalUsar;
-  const semSaldo = totalUsar > somaLivre + 1e-9;
-  const somaBate = totalUsar > 0 && Math.abs(totalComposicao - totalUsar) < 0.01;
+  const livreApos = somaLivre - totalLinhas;
+
+  const temValor = valorTotal > 0;
+  const semSaldo = temValor && valorTotal > somaLivre + 1e-9;
+  const faltam = semSaldo ? valorTotal - somaLivre : 0;
+
+  const linhasBatem = temValor && !estouraLinha && Math.abs(totalLinhas - valorTotal) < 0.01;
+  const linhasTexto = estouraLinha ? 'Uma linha usa mais que o livre'
+    : !temValor ? 'Informe o valor total primeiro'
+    : linhasBatem ? `Vinculado ${fmtMoeda(totalLinhas)} de ${fmtMoeda(valorTotal)} ✓`
+    : `Vinculado ${fmtMoeda(totalLinhas)} de ${fmtMoeda(valorTotal)}`;
+
+  const composicaoBate = temValor && Math.abs(totalComposicao - valorTotal) < 0.01;
+  const composicaoTexto = !temValor ? 'Informe o valor total primeiro'
+    : composicaoBate ? `Composição ${fmtMoeda(totalComposicao)} = valor total ✓`
+    : `Composição ${fmtMoeda(totalComposicao)} ≠ valor total ${fmtMoeda(valorTotal)}`;
+
   const itensOk = estado.itens.length > 0 && estado.itens.every(i => i.aplicacao.trim() && numOrZero(i.valor) > 0);
-  const temDescricao = estado.titulo.trim().length > 0 && estado.descricao.trim().length > 0;
   const temAnexos = !!((estado.anexos.a3 || estado.anexosExistentes.a3) && (estado.anexos.viabilidade || estado.anexosExistentes.viabilidade));
 
   const checks = [
-    { ok: temDescricao, texto: 'Título e descrição preenchidos' },
-    { ok: totalUsar > 0 && !estouraLinha, texto: estouraLinha ? 'Uma linha usa mais que o livre' : 'Verba vinculada dentro do livre' },
-    { ok: !semSaldo, texto: semSaldo ? 'Falta saldo na área — precisa de aumento de verba' : 'Saldo da área suficiente' },
-    { ok: somaBate, texto: somaBate ? 'Composição fecha com a verba vinculada' : `Soma ${fmtMoeda(totalComposicao)} ≠ verba ${fmtMoeda(totalUsar)}` },
-    { ok: itensOk, texto: 'Todos os itens têm aplicação e valor' },
+    { ok: temValor, texto: 'Valor total informado' },
+    { ok: linhasBatem, texto: linhasTexto },
+    { ok: composicaoBate && itensOk, texto: !itensOk && temValor ? 'Todos os itens precisam de aplicação e valor' : composicaoTexto },
+    { ok: !semSaldo, texto: semSaldo ? `Saldo insuficiente — faltam ${fmtMoeda(faltam)}` : 'Saldo da área suficiente' },
     { ok: temAnexos, texto: 'A3 e estudo de viabilidade anexados' },
   ];
 
   return {
-    totalUsar, totalComposicao, estouraLinha, somaAprovado, somaReservado, somaLivre, livreApos,
-    semSaldo, somaBate, itensOk, temDescricao, temAnexos, checks, bloqueado: checks.some(c => !c.ok)
+    valorTotal, totalLinhas, totalComposicao, estouraLinha, somaAprovado, somaReservado, somaLivre, livreApos,
+    temValor, semSaldo, faltam, linhasBatem, linhasTexto, composicaoBate, composicaoTexto, itensOk, temAnexos,
+    checks, bloqueado: checks.some(c => !c.ok)
   };
 }
 
@@ -201,6 +234,15 @@ function render() {
             <div class="field"><label>Empresa</label><input value="${esc.empresaNome}" disabled></div>
             <div class="field"><label>Área</label><input value="${esc.setorNome}" disabled></div>`}
           </div>
+
+          <div class="field">
+            <label>Valor total do investimento *</label>
+            <input type="number" min="0" step="0.01" id="pai-valor-total" value="${estado.valorTotal || ''}" placeholder="0"
+              oninput="onValorTotalInput(this.value)"
+              style="font-size:28px;font-weight:700;color:${c.semSaldo ? 'var(--red)' : 'var(--text)'};height:auto;padding:10px 14px">
+            <div id="valor-total-status" style="margin-top:8px">${renderStatusSaldo(c)}</div>
+          </div>
+
           <div class="form-row">
             <div class="field"><label>Ano-calendário do plano</label>
               <select id="pai-ano" onchange="onAnoChange(this.value)">
@@ -210,7 +252,8 @@ function render() {
             </div>
             <div class="field"><label>Tipo de investimento</label>
               <select id="pai-tipo" onchange="onTipoChange(this.value)">
-                ${Object.entries(TIPO_INVESTIMENTO_LABELS).map(([k, v]) => `<option value="${k}" ${estado.tipo === k ? 'selected' : ''}>${v}</option>`).join('')}
+                ${estado.tiposInvestimento.length === 0 ? '<option value="">Nenhum tipo cadastrado</option>' : ''}
+                ${estado.tiposInvestimento.map(t => `<option value="${t.nome}" ${estado.tipo === t.nome ? 'selected' : ''}>${t.nome}</option>`).join('')}
               </select>
             </div>
           </div>
@@ -226,9 +269,10 @@ function render() {
 
         <div class="form-section">
           <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:6px">
-            <div class="form-section-title" style="margin-bottom:0">Linhas do plano · o bolo de ${estado.ano}</div>
-            <div class="text-xs text-muted">só linhas da sua área e do ano selecionado</div>
+            <div class="form-section-title" style="margin-bottom:0">Linhas do plano · origem do dinheiro</div>
+            <div id="linhas-status" class="text-sm" style="color:${c.linhasBatem ? 'var(--green)' : 'var(--red)'}">${c.linhasTexto}</div>
           </div>
+          <div class="text-xs text-muted" style="margin-top:-4px;margin-bottom:8px">${estado.areaId ? 'linhas aprovadas da área, no ano selecionado' : 'setor ainda sem área vinculada — mostrando só as linhas do setor'}</div>
           ${estado.linhas.length === 0 ? `
           <div class="empty-state" style="padding:24px">
             <div class="empty-icon" style="font-size:24px">📭</div>
@@ -245,9 +289,10 @@ function render() {
 
         <div class="form-section">
           <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:6px">
-            <div class="form-section-title" style="margin-bottom:0">Composição do valor</div>
-            <div id="soma-status" class="text-sm" style="color:${c.somaBate ? 'var(--green)' : 'var(--red)'}">${textoSomaStatus(c)}</div>
+            <div class="form-section-title" style="margin-bottom:0">Composição do investimento · destino do dinheiro</div>
+            <div id="composicao-status" class="text-sm" style="color:${c.composicaoBate ? 'var(--green)' : 'var(--red)'}">${c.composicaoTexto}</div>
           </div>
+          <div class="text-xs text-muted" style="margin-top:-4px;margin-bottom:8px">mão de obra, peças, maquinário etc. — como o valor será gasto</div>
           <div style="overflow-x:auto">
           <table>
             <thead><tr><th style="width:36px">#</th><th>Aplicação</th><th class="text-right" style="width:160px">Valor</th><th style="width:36px"></th></tr></thead>
@@ -277,14 +322,14 @@ function render() {
           <div style="display:flex;flex-direction:column;gap:6px;font-size:13px">
             <div style="display:flex;justify-content:space-between"><span class="text-muted">Aprovado</span><span id="res-aprovado">${fmtMoeda(c.somaAprovado)}</span></div>
             <div style="display:flex;justify-content:space-between"><span class="text-muted">Reservado (outros PAIs)</span><span id="res-reservado">${fmtMoeda(c.somaReservado)}</span></div>
-            <div style="display:flex;justify-content:space-between;color:var(--accent)"><span>Este PAI</span><span id="res-este-pai">${fmtMoeda(c.totalUsar)}</span></div>
+            <div style="display:flex;justify-content:space-between;color:var(--accent)"><span>Este PAI</span><span id="res-este-pai">${fmtMoeda(c.totalLinhas)}</span></div>
             <div style="display:flex;justify-content:space-between;font-weight:600;border-top:1px solid var(--border);padding-top:6px"><span>Livre após envio</span><span id="res-livre-apos" style="color:${c.livreApos < 0 ? 'var(--red)' : 'var(--green)'}">${fmtMoeda(c.livreApos)}</span></div>
           </div>
         </div>
 
         <div class="chart-card">
           <div class="text-xs text-muted" style="text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px">Valor do PAI</div>
-          <div id="valor-pai" style="font-size:28px;font-weight:700">${fmtMoeda(c.totalUsar)}</div>
+          <div id="valor-pai" style="font-size:28px;font-weight:700">${fmtMoeda(c.valorTotal)}</div>
           <div class="text-xs text-muted">reserva de verba válida por 30 dias após o envio</div>
         </div>
 
@@ -302,8 +347,14 @@ function render() {
 }
 
 // ─── fragmentos reutilizados pelo render() e pelas atualizações parciais ───
-function textoSomaStatus(c) {
-  return c.somaBate ? `soma ${fmtMoeda(c.totalComposicao)} = verba vinculada ✓` : `soma ${fmtMoeda(c.totalComposicao)} ≠ verba ${fmtMoeda(c.totalUsar)}`;
+function renderStatusSaldo(c) {
+  if (!c.temValor) return '';
+  if (!c.semSaldo) return `<span class="text-xs text-muted">saldo livre da área: ${fmtMoeda(c.somaLivre)} — dentro do saldo ✓</span>`;
+  return `
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <span class="text-sm" style="color:var(--red);font-weight:600">Saldo insuficiente — faltam ${fmtMoeda(c.faltam)}</span>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="onSolicitarAumentoVerba()">Solicitar aumento de verba</button>
+    </div>`;
 }
 
 function renderLinhasBolo() {
@@ -320,7 +371,7 @@ function renderLinhasItens() {
   return estado.itens.map((it, i) => `
     <tr>
       <td class="text-muted">${i + 1}</td>
-      <td><input type="text" id="item-aplicacao-${i}" value="${it.aplicacao}" oninput="onItemAplicacaoInput(${i}, this.value)" placeholder="ex.: Correia 800mm"></td>
+      <td><input type="text" id="item-aplicacao-${i}" value="${it.aplicacao}" oninput="onItemAplicacaoInput(${i}, this.value)" placeholder="ex.: mão de obra, peça, maquinário..."></td>
       <td><input type="number" min="0" step="0.01" id="item-valor-${i}" value="${it.valor || ''}" placeholder="0" oninput="onItemValorInput(${i}, this.value)"></td>
       <td><button class="btn btn-ghost btn-sm" onclick="onRemoveItem(${i})" title="Remover">✕</button></td>
     </tr>`).join('');
@@ -344,7 +395,7 @@ function renderBotaoAnexo(chave) {
 function renderBarraVerba(c) {
   const total = c.somaAprovado || 1;
   const pctReservado = Math.max(0, Math.min(100, (c.somaReservado / total) * 100));
-  const pctEstePai = Math.max(0, Math.min(100 - pctReservado, (c.totalUsar / total) * 100));
+  const pctEstePai = Math.max(0, Math.min(100 - pctReservado, (c.totalLinhas / total) * 100));
   return `<div style="width:${pctReservado}%;background:var(--border2)"></div><div style="width:${pctEstePai}%;background:var(--accent)"></div>`;
 }
 
@@ -364,26 +415,33 @@ function setTexto(id, texto) { const el = document.getElementById(id); if (el) e
 function atualizar() {
   const c = calcular();
 
+  const valorInput = document.getElementById('pai-valor-total');
+  if (valorInput) valorInput.style.color = c.semSaldo ? 'var(--red)' : 'var(--text)';
+  const statusSaldo = document.getElementById('valor-total-status');
+  if (statusSaldo) statusSaldo.innerHTML = renderStatusSaldo(c);
+
   estado.linhas.forEach((l, i) => {
     const input = document.getElementById(`linha-usar-${i}`);
     if (input) input.style.borderColor = numOrZero(l.usar) > l.livre ? 'var(--red)' : 'var(--border)';
   });
   const aviso = document.getElementById('linha-aviso');
   if (aviso) aviso.textContent = c.estouraLinha ? 'Reduza o valor: alguma linha está sendo usada acima do saldo livre.' : '';
+  const linhasStatus = document.getElementById('linhas-status');
+  if (linhasStatus) { linhasStatus.textContent = c.linhasTexto; linhasStatus.style.color = c.linhasBatem ? 'var(--green)' : 'var(--red)'; }
 
-  const somaStatus = document.getElementById('soma-status');
-  if (somaStatus) { somaStatus.textContent = textoSomaStatus(c); somaStatus.style.color = c.somaBate ? 'var(--green)' : 'var(--red)'; }
+  const composicaoStatus = document.getElementById('composicao-status');
+  if (composicaoStatus) { composicaoStatus.textContent = c.composicaoTexto; composicaoStatus.style.color = c.composicaoBate ? 'var(--green)' : 'var(--red)'; }
 
   const barra = document.getElementById('barra-verba');
   if (barra) barra.innerHTML = renderBarraVerba(c);
 
   setTexto('res-aprovado', fmtMoeda(c.somaAprovado));
   setTexto('res-reservado', fmtMoeda(c.somaReservado));
-  setTexto('res-este-pai', fmtMoeda(c.totalUsar));
+  setTexto('res-este-pai', fmtMoeda(c.totalLinhas));
   const livreEl = document.getElementById('res-livre-apos');
   if (livreEl) { livreEl.textContent = fmtMoeda(c.livreApos); livreEl.style.color = c.livreApos < 0 ? 'var(--red)' : 'var(--green)'; }
 
-  setTexto('valor-pai', fmtMoeda(c.totalUsar));
+  setTexto('valor-pai', fmtMoeda(c.valorTotal));
 
   const checklist = document.getElementById('checklist');
   if (checklist) checklist.innerHTML = renderChecklist(c);
@@ -400,11 +458,16 @@ function atualizar() {
 function onEscopoChange(valor) { estado.escopoIdx = parseInt(valor, 10); carregarLinhas().then(render); }
 function onAnoChange(valor) { estado.ano = parseInt(valor, 10); carregarLinhas().then(render); }
 function onTipoChange(valor) { estado.tipo = valor; }
+function onValorTotalInput(valor) { estado.valorTotal = numOrZero(valor); atualizar(); }
 function onTituloInput(valor) { estado.titulo = valor; atualizar(); }
 function onDescricaoInput(valor) { estado.descricao = valor; atualizar(); }
 function onLinhaUsarInput(i, valor) { estado.linhas[i].usar = numOrZero(valor); atualizar(); }
 function onItemAplicacaoInput(i, valor) { estado.itens[i].aplicacao = valor; atualizar(); }
 function onItemValorInput(i, valor) { estado.itens[i].valor = numOrZero(valor); atualizar(); }
+
+function onSolicitarAumentoVerba() {
+  toast('Solicitação de aumento de verba chega numa próxima etapa — por ora, ajuste o valor total ou fale com a Controladoria.');
+}
 
 function onAddItem() {
   estado.itens.push({ aplicacao: '', valor: 0 });
@@ -437,7 +500,8 @@ async function onSalvarRascunho() {
   const esc = estado.escopos[estado.escopoIdx];
   const payload = {
     plano_id: estado.planoId, empresa_id: esc.empresaId, setor_id: esc.setorId, ano_calendario: estado.ano,
-    tipo: estado.tipo, titulo: estado.titulo, descricao: estado.descricao, solicitante_id: currentUser.id, status: 'rascunho'
+    tipo: estado.tipo, titulo: estado.titulo, descricao: estado.descricao, valor_total: numOrZero(estado.valorTotal),
+    solicitante_id: currentUser.id, status: 'rascunho'
   };
 
   let error;
@@ -457,6 +521,7 @@ async function onEnviarPai() {
   const c = calcular();
   if (c.bloqueado) { toast('Complete os itens do checklist antes de enviar', 'error'); return; }
   if (!estado.planoId) { toast('Nenhum plano carregado para esta empresa/ano ainda', 'error'); return; }
+  if (!estado.titulo.trim() || !estado.descricao.trim()) { toast('Preencha título e descrição', 'error'); return; }
 
   const esc = estado.escopos[estado.escopoIdx];
   const reenvio = estado.statusOriginal === 'devolvido';
@@ -481,7 +546,7 @@ async function onEnviarPai() {
   const payload = {
     numero, plano_id: estado.planoId, empresa_id: esc.empresaId, setor_id: esc.setorId, ano_calendario: estado.ano,
     tipo: estado.tipo, titulo: estado.titulo, descricao: estado.descricao, solicitante_id: currentUser.id,
-    status: 'em_critica', valor_total: c.totalUsar,
+    status: 'em_critica', valor_total: c.valorTotal,
     enviado_em: agora.toISOString(), reserva_expira_em: reservaExpira.toISOString()
   };
 
@@ -542,7 +607,7 @@ async function onEnviarPai() {
 // Funções chamadas via atributos inline (onclick/onchange) precisam estar em window,
 // pois módulos ES não expõem suas funções no escopo global automaticamente.
 Object.assign(window, {
-  abrirNovoPai, onEscopoChange, onAnoChange, onTipoChange, onTituloInput, onDescricaoInput,
+  abrirNovoPai, onEscopoChange, onAnoChange, onTipoChange, onValorTotalInput, onTituloInput, onDescricaoInput,
   onLinhaUsarInput, onItemAplicacaoInput, onItemValorInput, onAddItem, onRemoveItem,
-  onAnexoSelecionado, onSalvarRascunho, onEnviarPai
+  onAnexoSelecionado, onSolicitarAumentoVerba, onSalvarRascunho, onEnviarPai
 });

@@ -8,7 +8,7 @@ import { toast } from '../shared/ui.js';
 // área de cada linha empresa_setores é feito na aba "Vínculo Setor → Área".
 // ═══════════════════════════════════════════════════
 
-let abaAtual = 'unidades'; // 'unidades' | 'setores' | 'setores-unidade'
+let abaAtual = 'unidades'; // 'unidades' | 'setores' | 'setores-unidade' | 'tipos-investimento'
 
 export async function renderUnidadesSetores(aba) {
   if (aba) abaAtual = aba;
@@ -19,12 +19,14 @@ export async function renderUnidadesSetores(aba) {
       <button class="btn btn-sm ${abaAtual === 'unidades' ? 'btn-primary' : 'btn-secondary'}" onclick="renderUnidadesSetores('unidades')">Unidades</button>
       <button class="btn btn-sm ${abaAtual === 'setores' ? 'btn-primary' : 'btn-secondary'}" onclick="renderUnidadesSetores('setores')">Setores</button>
       <button class="btn btn-sm ${abaAtual === 'setores-unidade' ? 'btn-primary' : 'btn-secondary'}" onclick="renderUnidadesSetores('setores-unidade')">Setores por unidade</button>
+      <button class="btn btn-sm ${abaAtual === 'tipos-investimento' ? 'btn-primary' : 'btn-secondary'}" onclick="renderUnidadesSetores('tipos-investimento')">Tipos de Investimento</button>
     </div>
     <div id="unidades-conteudo"><div class="loading"><div class="spinner"></div> Carregando...</div></div>`;
 
   if (abaAtual === 'unidades') await montarAbaUnidades();
   else if (abaAtual === 'setores') await montarAbaSetoresGlobais();
-  else await montarAbaSetoresPorUnidade();
+  else if (abaAtual === 'setores-unidade') await montarAbaSetoresPorUnidade();
+  else await montarAbaTiposInvestimento();
 }
 
 // ═══════════════════════════════════════════════════
@@ -317,11 +319,89 @@ export async function desmarcarTodosSetoresDaUnidade(empresaId) {
   toast(`${marcadas.length} setor(es) removido(s) da unidade`);
 }
 
+// ═══════════════════════════════════════════════════
+// ABA · TIPOS DE INVESTIMENTO (cadastro global, usado no select da
+// Solicitação do PAI — Etapa 5)
+// ═══════════════════════════════════════════════════
+async function montarAbaTiposInvestimento() {
+  const conteudo = document.getElementById('unidades-conteudo');
+  const { data: tipos, error } = await sb.from('tipos_investimento').select('*').order('ordem');
+  if (error) { toast('Erro ao carregar tipos de investimento: ' + error.message, 'error'); return; }
+
+  conteudo.innerHTML = `
+    <div class="table-card">
+      <div class="table-header">
+        <div class="table-title">Tipos de Investimento · ${(tipos || []).length}</div>
+        <button class="btn btn-primary btn-sm" onclick="abrirFormTipoInvestimento()">+ Novo tipo</button>
+      </div>
+      <div style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Ordem</th><th>Nome</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+          ${(tipos || []).map(t => `
+            <tr onclick="abrirFormTipoInvestimento('${t.id}')">
+              <td class="text-muted">${t.ordem ?? 0}</td>
+              <td>${t.nome}</td>
+              <td>${t.ativo ? '<span class="badge badge-success">Ativo</span>' : '<span class="badge badge-danger">Inativo</span>'}</td>
+              <td class="text-right"><a href="#" onclick="event.stopPropagation();alternarAtivoTipoInvestimento('${t.id}',${t.ativo});return false;" style="color:var(--accent);font-size:12px">${t.ativo ? 'Desativar' : 'Ativar'}</a></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+      </div>
+    </div>`;
+}
+
+export async function abrirFormTipoInvestimento(id) {
+  const existente = id ? await sb.from('tipos_investimento').select('*').eq('id', id).single().then(r => r.data) : null;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'modal-tipo-investimento';
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:420px">
+      <div class="modal-header">
+        <h2>${id ? 'Editar tipo de investimento' : 'Novo tipo de investimento'}</h2>
+        <button class="close-btn" onclick="document.getElementById('modal-tipo-investimento').remove()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+      <div class="modal-body">
+        <div class="field"><label>Nome *</label><input type="text" id="tipo-investimento-nome" value="${existente?.nome || ''}" placeholder="ex.: Obra / instalação"></div>
+        <div class="field"><label>Ordem</label><input type="number" id="tipo-investimento-ordem" value="${existente?.ordem ?? 0}"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="document.getElementById('modal-tipo-investimento').remove()">Cancelar</button>
+        <button class="btn btn-primary" onclick="salvarTipoInvestimento(${id ? `'${id}'` : 'null'})">Salvar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  setTimeout(() => document.getElementById('tipo-investimento-nome')?.focus(), 100);
+}
+
+export async function salvarTipoInvestimento(id) {
+  const nome = document.getElementById('tipo-investimento-nome').value.trim();
+  if (!nome) { toast('Nome é obrigatório', 'error'); return; }
+  const payload = { nome, ordem: parseInt(document.getElementById('tipo-investimento-ordem').value, 10) || 0 };
+  const { error } = id
+    ? await sb.from('tipos_investimento').update(payload).eq('id', id)
+    : await sb.from('tipos_investimento').insert(payload);
+  if (error) { toast('Erro ao salvar tipo de investimento: ' + error.message, 'error'); return; }
+  document.getElementById('modal-tipo-investimento')?.remove();
+  toast('Tipo de investimento salvo');
+  montarAbaTiposInvestimento();
+}
+
+export async function alternarAtivoTipoInvestimento(id, ativoAtual) {
+  const { error } = await sb.from('tipos_investimento').update({ ativo: !ativoAtual }).eq('id', id);
+  if (error) { toast('Erro: ' + error.message, 'error'); return; }
+  toast(ativoAtual ? 'Tipo desativado' : 'Tipo ativado');
+  montarAbaTiposInvestimento();
+}
+
 // Funções chamadas via atributos inline (onclick/onchange) precisam estar em window,
 // pois módulos ES não expõem suas funções no escopo global automaticamente.
 Object.assign(window, {
   renderUnidadesSetores, abrirFormUnidade, salvarUnidade, alternarAtivaUnidade,
   abrirFormSetorGlobal, salvarSetorGlobal, alternarAtivoSetorGlobal,
   selecionarEmpresaSetores, clicouSetorNaUnidade,
-  marcarTodosSetoresDaUnidade, desmarcarTodosSetoresDaUnidade
+  marcarTodosSetoresDaUnidade, desmarcarTodosSetoresDaUnidade,
+  abrirFormTipoInvestimento, salvarTipoInvestimento, alternarAtivoTipoInvestimento
 });
