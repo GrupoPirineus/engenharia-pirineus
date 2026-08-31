@@ -4,6 +4,7 @@ import { carregarAtribuicoes } from '../../shared/acesso.js';
 import { currentUser } from './auth.js';
 import { renderMeusPais, fmtMoeda } from './dashboard.js';
 import { iniciarEtapaControladoria } from './aprovacao.js';
+import { abrirModalSolicitarAumento } from './aumento.js';
 
 // Bucket reaproveitado do mundo Chamados (mesmo Supabase Storage do projeto),
 // com prefixo próprio para não colidir com os anexos de chamado.
@@ -18,7 +19,7 @@ function numOrZero(v) { const n = parseFloat(v); return isNaN(n) ? 0 : n; }
 // ═══════════════════════════════════════════════════
 // ESCOPO DO SOLICITANTE (empresa × área a partir das atribuições)
 // ═══════════════════════════════════════════════════
-async function resolverEscoposSolicitante() {
+export async function resolverEscoposSolicitante() {
   const atribuicoes = await carregarAtribuicoes(currentUser.id);
   const relevantes = atribuicoes.filter(a => a.mundo === 'investimentos' && a.papel === 'inv_solicitante');
   const escopos = [];
@@ -484,7 +485,9 @@ function onItemAplicacaoInput(i, valor) { estado.itens[i].aplicacao = valor; atu
 function onItemValorInput(i, valor) { estado.itens[i].valor = numOrZero(valor); atualizar(); }
 
 function onSolicitarAumentoVerba() {
-  toast('Solicitação de aumento de verba chega numa próxima etapa — por ora, ajuste o valor total ou fale com a Controladoria.');
+  const esc = estado.escopos[estado.escopoIdx];
+  const c = calcular();
+  abrirModalSolicitarAumento({ empresaId: esc.empresaId, setorId: esc.setorId, ano: estado.ano, valorSugerido: c.faltam });
 }
 
 function onAddItem() {

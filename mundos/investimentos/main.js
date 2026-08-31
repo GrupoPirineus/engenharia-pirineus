@@ -5,16 +5,21 @@ import { temPapel } from '../../shared/acesso.js';
 import { renderMeusPais } from './dashboard.js';
 import { renderFilaControladoria, renderFilaAprovador, renderFilaDiretor } from './aprovacao.js';
 import { renderPlanoInvestimento } from './plano.js';
+import {
+  renderMeusAumentos, renderFilaControladoriaAumento, renderFilaAprovadorAumento,
+  renderFilaDiretorAumento, renderFilaDiretorCeoAumento
+} from './aumento.js';
 
 export async function montarMundoInvestimentos(usuario) {
   document.getElementById('topbar-title').textContent = 'Investimentos';
   document.getElementById('topbar-actions').innerHTML = '';
 
-  const [souSolicitante, souControladoria, souAprovador, souDiretor] = await Promise.all([
+  const [souSolicitante, souControladoria, souAprovador, souDiretor, souDiretorCeo] = await Promise.all([
     temPapel('investimentos', 'inv_solicitante'),
     temPapel('investimentos', 'controladoria_op'),
     temPapel('investimentos', 'inv_aprovador'),
-    temPapel('investimentos', 'diretor')
+    temPapel('investimentos', 'diretor'),
+    temPapel('investimentos', 'diretor_ceo')
   ]);
 
   const papeis = [];
@@ -22,6 +27,7 @@ export async function montarMundoInvestimentos(usuario) {
   if (souControladoria) papeis.push('Controladoria Operacional');
   if (souAprovador) papeis.push('Superintendente');
   if (souDiretor) papeis.push('Diretor');
+  if (souDiretorCeo) papeis.push('Diretor CEO');
 
   document.getElementById('sidebar-nav').innerHTML = `
     <div class="nav-section">
@@ -30,6 +36,10 @@ export async function montarMundoInvestimentos(usuario) {
       <button class="nav-item" onclick="abrirMeusPais()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
         Meus PAIs
+      </button>
+      <button class="nav-item" onclick="renderMeusAumentos()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+        Aumento de Verba
       </button>` : ''}
       ${souControladoria ? `
       <button class="nav-item" onclick="renderFilaControladoria()">
@@ -39,16 +49,33 @@ export async function montarMundoInvestimentos(usuario) {
       <button class="nav-item" onclick="renderPlanoInvestimento()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 21H3M6 21V10M12 21V4M18 21v-7"/></svg>
         Plano de Investimento
+      </button>
+      <button class="nav-item" onclick="renderFilaControladoriaAumento()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+        Fila · Aumento · Controladoria
       </button>` : ''}
       ${souAprovador ? `
       <button class="nav-item" onclick="renderFilaAprovador()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
         Fila · Superintendente
+      </button>
+      <button class="nav-item" onclick="renderFilaAprovadorAumento()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+        Fila · Aumento · Superintendente
       </button>` : ''}
       ${souDiretor ? `
       <button class="nav-item" onclick="renderFilaDiretor()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
         Fila · Diretor
+      </button>
+      <button class="nav-item" onclick="renderFilaDiretorAumento()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+        Fila · Aumento · Diretor
+      </button>` : ''}
+      ${souDiretorCeo ? `
+      <button class="nav-item" onclick="renderFilaDiretorCeoAumento()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+        Fila · Aumento · Diretor CEO
       </button>` : ''}
     </div>`;
   document.getElementById('user-role-display').textContent = papeis.join(' · ');
@@ -59,6 +86,7 @@ export async function montarMundoInvestimentos(usuario) {
   if (souControladoria) renderFilaControladoria();
   else if (souAprovador) renderFilaAprovador();
   else if (souDiretor) renderFilaDiretor();
+  else if (souDiretorCeo) renderFilaDiretorCeoAumento();
   else if (souSolicitante) renderMeusPais();
   else {
     document.getElementById('page-content').innerHTML = `

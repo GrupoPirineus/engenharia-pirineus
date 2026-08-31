@@ -14,14 +14,14 @@ const PAPEL_LABELS = {
   solicitante: 'Solicitante', engenheiro: 'Engenheiro', gestor: 'Gestor',
   inv_solicitante: 'Solicitante', inv_aprovador: 'Aprovador',
   controladoria_op: 'Controladoria Operacional', controladoria_contabil: 'Controladoria Contábil',
-  diretor: 'Diretor'
+  diretor: 'Diretor', diretor_ceo: 'Diretor CEO'
 };
 // 'master' fica de fora de propósito — não é atribuível por aqui (ver
 // Arquitetura do Portal - Dois Mundos.dc.html: "o master não recebe papel de
 // mundo nenhum, só administra"). Promoção a master é ação direta no banco.
 const PAPEIS_POR_MUNDO = {
   chamados: ['solicitante', 'engenheiro', 'gestor'],
-  investimentos: ['inv_solicitante', 'inv_aprovador', 'controladoria_op', 'controladoria_contabil', 'diretor']
+  investimentos: ['inv_solicitante', 'inv_aprovador', 'controladoria_op', 'controladoria_contabil', 'diretor', 'diretor_ceo']
 };
 
 let filtroAtual = 'todos'; // 'todos' | 'pendentes'
