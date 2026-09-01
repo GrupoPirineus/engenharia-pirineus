@@ -25,13 +25,11 @@ import { badgeStatusPai, fmtMoeda, TIPO_INVESTIMENTO_LABELS } from './dashboard.
 
 const ETAPA_LABELS = { controladoria_op: 'Controladoria Operacional', aprovador: 'Superintendente da Área', diretor: 'Diretor' };
 const DECISAO_LABELS = { pendente: 'Pendente', aprovado: 'Aprovado', devolvido: 'Devolvido', reprovado: 'Reprovado' };
-const TITULOS_FILA = {
-  controladoria: 'Fila · Controladoria Operacional',
-  aprovador: 'Fila · Superintendente',
-  diretor: 'Fila · Diretor'
-};
 
-let filaAtual = null; // 'controladoria' | 'aprovador' | 'diretor'
+// Chamado depois de toda decisão registrada, para quem estiver montando a
+// tela (Etapa 7b: a tela "Aprovações" consolidada) recarregar a aba ativa.
+let aoAtualizar = null;
+export function definirCallbackAtualizacao(fn) { aoAtualizar = fn; }
 
 // ═══════════════════════════════════════════════════
 // ABERTURA DO FLUXO (chamado pela Solicitação — envio novo ou reenvio após devolução)
@@ -73,25 +71,17 @@ async function carregarFilaPorResponsavel(etapa, coluna) {
 const carregarFilaAprovador = () => carregarFilaPorResponsavel('aprovador', 'responsavel_id');
 const carregarFilaDiretor = () => carregarFilaPorResponsavel('diretor', 'diretor_id');
 
-export async function renderFilaControladoria() { filaAtual = 'controladoria'; await montarFila(); }
-export async function renderFilaAprovador() { filaAtual = 'aprovador'; await montarFila(); }
-export async function renderFilaDiretor() { filaAtual = 'diretor'; await montarFila(); }
-
-async function atualizarFilaAtual() { if (filaAtual) await montarFila(); }
-
-async function montarFila() {
-  document.getElementById('topbar-title').textContent = TITULOS_FILA[filaAtual];
-  document.getElementById('topbar-actions').innerHTML = '';
-  const page = document.getElementById('page-content');
-  page.innerHTML = '<div class="loading"><div class="spinner"></div> Carregando...</div>';
-
-  const passos = filaAtual === 'controladoria' ? await carregarFilaControladoria()
-    : filaAtual === 'aprovador' ? await carregarFilaAprovador()
+// Fragmento de HTML da fila de um papel (chave: 'controladoria' | 'aprovador'
+// | 'diretor') — usado pela tela consolidada "Aprovações" (Etapa 7b), uma
+// aba por papel, PAI e Aumento de Verba lado a lado na mesma aba.
+export async function renderFragmentoFilaPai(chave) {
+  const passos = chave === 'controladoria' ? await carregarFilaControladoria()
+    : chave === 'aprovador' ? await carregarFilaAprovador()
     : await carregarFilaDiretor();
 
-  page.innerHTML = `
+  return `
     <div class="table-card">
-      <div class="table-header"><div class="table-title">${TITULOS_FILA[filaAtual]} · ${passos.length}</div></div>
+      <div class="table-header"><div class="table-title">PAIs · ${passos.length}</div></div>
       ${passos.length === 0 ? `
       <div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">Fila vazia</div><div class="empty-desc">Nenhum PAI aguardando sua análise no momento.</div></div>` : `
       <div style="overflow-x:auto">
@@ -267,7 +257,7 @@ async function registrarDecisao(paiId, etapa, decisao, observacao) {
   });
 
   toast('Decisão registrada');
-  await atualizarFilaAtual();
+  if (aoAtualizar) await aoAtualizar();
 }
 
 export async function confirmarFormalizacao(paiId) {
@@ -295,12 +285,11 @@ export async function confirmarFormalizacao(paiId) {
 
   document.getElementById('modal-decisao-pai')?.remove();
   toast('PAI formalizado com sucesso');
-  await atualizarFilaAtual();
+  if (aoAtualizar) await aoAtualizar();
 }
 
 // Funções chamadas via atributos inline (onclick) precisam estar em window,
 // pois módulos ES não expõem suas funções no escopo global automaticamente.
 Object.assign(window, {
-  renderFilaControladoria, renderFilaAprovador, renderFilaDiretor,
   abrirDetalhePai, confirmarDecisao, confirmarFormalizacao
 });

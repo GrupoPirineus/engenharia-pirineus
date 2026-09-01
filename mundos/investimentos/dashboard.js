@@ -2,6 +2,7 @@ import { sb } from '../../shared/supabase.js';
 import { toast, fmtDate } from '../../shared/ui.js';
 import { currentUser } from './auth.js';
 import { abrirNovoPai } from './solicitacao.js';
+import { renderConteudoAumentos } from './aumento.js';
 
 // ═══════════════════════════════════════════════════
 // LABELS
@@ -29,22 +30,48 @@ export function fmtMoeda(n) {
 }
 
 // ═══════════════════════════════════════════════════
-// MEUS PAIs
+// MEUS PAIs — com aba secundária "Aumentos de Verba" (acompanhamento; a
+// criação do pedido continua só pelo botão na tela de Novo PAI).
 // ═══════════════════════════════════════════════════
+let abaMeusPais = 'pais';
+
 export async function renderMeusPais() {
+  abaMeusPais = 'pais';
   document.getElementById('topbar-title').textContent = 'Meus PAIs';
   document.getElementById('topbar-actions').innerHTML = '';
-  const page = document.getElementById('page-content');
-  page.innerHTML = '<div class="loading"><div class="spinner"></div> Carregando...</div>';
+  document.getElementById('page-content').innerHTML = `
+    <div class="auth-tabs" style="max-width:340px;margin-bottom:20px">
+      <button class="auth-tab active" id="tab-meus-pais" onclick="onTabMeusPais('pais')">PAIs</button>
+      <button class="auth-tab" id="tab-meus-aumentos" onclick="onTabMeusPais('aumentos')">Aumentos de Verba</button>
+    </div>
+    <div id="meus-pais-conteudo"><div class="loading"><div class="spinner"></div> Carregando...</div></div>`;
+  await montarConteudoMeusPais();
+}
 
+export async function onTabMeusPais(aba) {
+  abaMeusPais = aba;
+  document.getElementById('tab-meus-pais')?.classList.toggle('active', aba === 'pais');
+  document.getElementById('tab-meus-aumentos')?.classList.toggle('active', aba === 'aumentos');
+  const conteudo = document.getElementById('meus-pais-conteudo');
+  if (conteudo) conteudo.innerHTML = '<div class="loading"><div class="spinner"></div> Carregando...</div>';
+  await montarConteudoMeusPais();
+}
+
+async function montarConteudoMeusPais() {
+  const conteudo = document.getElementById('meus-pais-conteudo');
+  if (!conteudo) return;
+  conteudo.innerHTML = abaMeusPais === 'pais' ? await renderConteudoPais() : await renderConteudoAumentos();
+}
+
+async function renderConteudoPais() {
   const { data: pais, error } = await sb.from('pais')
     .select('*, empresas(nome), setores(nome)')
     .eq('solicitante_id', currentUser.id)
     .order('criado_em', { ascending: false });
 
-  if (error) { toast('Erro ao carregar PAIs: ' + error.message, 'error'); return; }
+  if (error) { toast('Erro ao carregar PAIs: ' + error.message, 'error'); return ''; }
 
-  page.innerHTML = `
+  return `
     <div style="margin-bottom:16px">
       <button class="btn btn-primary btn-sm" onclick="abrirNovoPai()">+ Novo PAI</button>
     </div>
@@ -75,4 +102,4 @@ export async function renderMeusPais() {
 
 // Funções chamadas via atributos inline (onclick) precisam estar em window,
 // pois módulos ES não expõem suas funções no escopo global automaticamente.
-Object.assign(window, { renderMeusPais, abrirNovoPai });
+Object.assign(window, { renderMeusPais, abrirNovoPai, onTabMeusPais });

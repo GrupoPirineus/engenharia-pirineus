@@ -26,9 +26,9 @@ function numOrZero(v) { const n = parseFloat(v); return isNaN(n) ? 0 : n; }
 
 // ═══════════════════════════════════════════════════
 // SOLICITAÇÃO — modal de "Solicitar aumento de verba"
-// Chamado a partir do botão na tela de Solicitação (com prefill do
-// contexto do PAI que estourou o teto) e/ou do item de nav "Aumento de
-// Verba" (sem prefill).
+// Único ponto de entrada: o botão na tela de Solicitação (Novo PAI),
+// quando o valor estoura o teto da área — com prefill do contexto do PAI.
+// Não há tela/nav própria para abrir um pedido (Etapa 7b).
 // ═══════════════════════════════════════════════════
 let estadoForm = null;
 
@@ -138,32 +138,25 @@ async function onEnviarAumento() {
 
   document.getElementById('modal-solicitar-aumento')?.remove();
   toast(`Aumento de verba ${numero} enviado à Controladoria`);
-  await renderMeusAumentos();
 }
 
 // ═══════════════════════════════════════════════════
-// MEUS AUMENTOS DE VERBA (solicitante)
+// MEUS AUMENTOS DE VERBA — fragmento de acompanhamento (Etapa 7b: virou
+// aba dentro de "Meus PAIs", em vez de tela própria; sem botão de criar
+// pedido aqui — isso só acontece pelo botão na tela de Novo PAI).
 // ═══════════════════════════════════════════════════
-export async function renderMeusAumentos() {
-  document.getElementById('topbar-title').textContent = 'Aumento de Verba';
-  document.getElementById('topbar-actions').innerHTML = '';
-  const page = document.getElementById('page-content');
-  page.innerHTML = '<div class="loading"><div class="spinner"></div> Carregando...</div>';
-
+export async function renderConteudoAumentos() {
   const { data: aumentos, error } = await sb.from('aumentos_verba')
     .select('*, empresas(nome), setores(nome)')
     .eq('solicitante_id', currentUser.id)
     .order('criado_em', { ascending: false });
-  if (error) { toast('Erro ao carregar aumentos de verba: ' + error.message, 'error'); return; }
+  if (error) { toast('Erro ao carregar aumentos de verba: ' + error.message, 'error'); return ''; }
 
-  page.innerHTML = `
-    <div style="margin-bottom:16px">
-      <button class="btn btn-primary btn-sm" onclick="abrirModalSolicitarAumento()">+ Solicitar aumento de verba</button>
-    </div>
+  return `
     <div class="table-card">
       <div class="table-header"><div class="table-title">Meus aumentos de verba</div></div>
       ${(aumentos || []).length === 0 ? `
-      <div class="empty-state"><div class="empty-icon">💰</div><div class="empty-title">Nenhum aumento solicitado ainda</div><div class="empty-desc">Clique em "Solicitar aumento de verba" quando o teto da sua área não for suficiente para um PAI.</div></div>` : `
+      <div class="empty-state"><div class="empty-icon">💰</div><div class="empty-title">Nenhum aumento solicitado ainda</div><div class="empty-desc">Peça um aumento direto na tela de Novo PAI, quando o teto da área não for suficiente.</div></div>` : `
       <div style="overflow-x:auto">
       <table>
         <thead><tr><th>Número</th><th>Empresa</th><th>Área</th><th>Ano</th><th class="text-right">Valor</th><th>Status</th><th>Criado em</th></tr></thead>
@@ -187,14 +180,11 @@ export async function renderMeusAumentos() {
 // ═══════════════════════════════════════════════════
 // FILAS (uma por papel, mesma mecânica de aprovacao.js)
 // ═══════════════════════════════════════════════════
-const TITULOS_FILA_AUMENTO = {
-  controladoria: 'Fila · Aumento de Verba · Controladoria Operacional',
-  aprovador: 'Fila · Aumento de Verba · Superintendente',
-  diretor: 'Fila · Aumento de Verba · Diretor da Área',
-  diretor_ceo: 'Fila · Aumento de Verba · Diretor CEO'
-};
 
-let filaAumentoAtual = null; // 'controladoria' | 'aprovador' | 'diretor' | 'diretor_ceo'
+// Chamado depois de toda decisão registrada, para a tela "Aprovações"
+// consolidada (Etapa 7b) recarregar a aba ativa.
+let aoAtualizar = null;
+export function definirCallbackAtualizacao(fn) { aoAtualizar = fn; }
 
 const SELECT_FILA_AUMENTO = '*, aumento:aumentos_verba(*, empresas(nome), setores(nome), solicitante:solicitante_id(nome,email))';
 
@@ -223,27 +213,18 @@ async function carregarFilaDiretorCeoAumento() {
   return data || [];
 }
 
-export async function renderFilaControladoriaAumento() { filaAumentoAtual = 'controladoria'; await montarFilaAumento(); }
-export async function renderFilaAprovadorAumento() { filaAumentoAtual = 'aprovador'; await montarFilaAumento(); }
-export async function renderFilaDiretorAumento() { filaAumentoAtual = 'diretor'; await montarFilaAumento(); }
-export async function renderFilaDiretorCeoAumento() { filaAumentoAtual = 'diretor_ceo'; await montarFilaAumento(); }
-
-async function atualizarFilaAumentoAtual() { if (filaAumentoAtual) await montarFilaAumento(); }
-
-async function montarFilaAumento() {
-  document.getElementById('topbar-title').textContent = TITULOS_FILA_AUMENTO[filaAumentoAtual];
-  document.getElementById('topbar-actions').innerHTML = '';
-  const page = document.getElementById('page-content');
-  page.innerHTML = '<div class="loading"><div class="spinner"></div> Carregando...</div>';
-
-  const passos = filaAumentoAtual === 'controladoria' ? await carregarFilaControladoriaAumento()
-    : filaAumentoAtual === 'aprovador' ? await carregarFilaPorResponsavelAumento('aprovador', 'responsavel_id')
-    : filaAumentoAtual === 'diretor' ? await carregarFilaPorResponsavelAumento('diretor', 'diretor_id')
+// Fragmento de HTML da fila de um papel (chave: 'controladoria' | 'aprovador'
+// | 'diretor' | 'diretor_ceo') — usado pela tela consolidada "Aprovações"
+// (Etapa 7b), ao lado da fila de PAI da mesma aba.
+export async function renderFragmentoFilaAumento(chave) {
+  const passos = chave === 'controladoria' ? await carregarFilaControladoriaAumento()
+    : chave === 'aprovador' ? await carregarFilaPorResponsavelAumento('aprovador', 'responsavel_id')
+    : chave === 'diretor' ? await carregarFilaPorResponsavelAumento('diretor', 'diretor_id')
     : await carregarFilaDiretorCeoAumento();
 
-  page.innerHTML = `
+  return `
     <div class="table-card">
-      <div class="table-header"><div class="table-title">${TITULOS_FILA_AUMENTO[filaAumentoAtual]} · ${passos.length}</div></div>
+      <div class="table-header"><div class="table-title">Aumentos de Verba · ${passos.length}</div></div>
       ${passos.length === 0 ? `
       <div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">Fila vazia</div><div class="empty-desc">Nenhum aumento de verba aguardando sua análise no momento.</div></div>` : `
       <div style="overflow-x:auto">
@@ -348,7 +329,7 @@ async function registrarDecisaoAumento(aumentoId, etapa, decisao, observacao) {
     const { error } = await sb.from('aumentos_verba').update({ status: decisao }).eq('id', aumentoId);
     if (error) { toast('Erro ao atualizar status do aumento: ' + error.message, 'error'); return; }
     toast('Decisão registrada');
-    await atualizarFilaAumentoAtual();
+    if (aoAtualizar) await aoAtualizar();
     return;
   }
 
@@ -363,7 +344,7 @@ async function registrarDecisaoAumento(aumentoId, etapa, decisao, observacao) {
       const { error } = await sb.rpc('aplicar_efeito_aumento', { p_aumento_id: aumentoId });
       if (error) { toast('Erro ao aplicar efeito do aumento: ' + error.message, 'error'); return; }
       toast('Aumento aprovado — teto da área elevado (Diretor da área também é Diretor CEO)');
-      await atualizarFilaAumentoAtual();
+      if (aoAtualizar) await aoAtualizar();
       return;
     }
     await sb.from('passos_aumento').insert({ aumento_id: aumentoId, ordem: passo.ordem + 1, etapa: 'diretor_ceo', decisao: 'pendente' });
@@ -371,19 +352,17 @@ async function registrarDecisaoAumento(aumentoId, etapa, decisao, observacao) {
     const { error } = await sb.rpc('aplicar_efeito_aumento', { p_aumento_id: aumentoId });
     if (error) { toast('Erro ao aplicar efeito do aumento: ' + error.message, 'error'); return; }
     toast('Aumento aprovado — teto da área elevado');
-    await atualizarFilaAumentoAtual();
+    if (aoAtualizar) await aoAtualizar();
     return;
   }
 
   toast('Decisão registrada');
-  await atualizarFilaAumentoAtual();
+  if (aoAtualizar) await aoAtualizar();
 }
 
 // Funções chamadas via atributos inline (onclick/onchange) precisam estar em window,
 // pois módulos ES não expõem suas funções no escopo global automaticamente.
 Object.assign(window, {
   abrirModalSolicitarAumento, onAumentoEscopoChange, onAumentoAnoChange, onAumentoValorInput, onAumentoJustificativaInput, onEnviarAumento,
-  renderMeusAumentos,
-  renderFilaControladoriaAumento, renderFilaAprovadorAumento, renderFilaDiretorAumento, renderFilaDiretorCeoAumento,
   abrirDetalheAumento, confirmarDecisaoAumento
 });
