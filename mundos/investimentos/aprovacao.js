@@ -1,7 +1,7 @@
 import { sb } from '../../shared/supabase.js';
 import { toast, fmtDate } from '../../shared/ui.js';
 import { currentUser } from './auth.js';
-import { badgeStatusPai, fmtMoeda, TIPO_INVESTIMENTO_LABELS } from './dashboard.js';
+import { badgeStatusPai, fmtMoeda, TIPO_INVESTIMENTO_LABELS, STATUS_PAI_LABELS } from './dashboard.js';
 
 // ═══════════════════════════════════════════════════
 // MOTOR DE APROVAÇÃO DO PAI (Etapa 4)
@@ -108,13 +108,30 @@ export async function renderFragmentoFilaPai(chave) {
 // DETALHE + DECISÃO
 // ═══════════════════════════════════════════════════
 async function carregarDetalhePai(paiId) {
-  const [{ data: pai }, { data: itens }, { data: anexos }, { data: vinculos }] = await Promise.all([
+  const [{ data: pai }, { data: itens }, { data: anexos }, { data: vinculos }, { data: historico }] = await Promise.all([
     sb.from('pais').select('*, empresas(nome), setores(nome), solicitante:solicitante_id(nome,email)').eq('id', paiId).single(),
     sb.from('itens_pai').select('*').eq('pai_id', paiId).order('ordem'),
     sb.from('anexos_pai').select('*').eq('pai_id', paiId),
-    sb.from('vinculos_verba').select('*, linhas_plano(descricao)').eq('pai_id', paiId)
+    sb.from('vinculos_verba').select('*, linhas_plano(descricao)').eq('pai_id', paiId),
+    sb.from('historico_pai').select('*, usuario:usuario_id(nome)').eq('pai_id', paiId).order('criado_em')
   ]);
-  return { pai, itens: itens || [], anexos: anexos || [], vinculos: vinculos || [] };
+
+  // Encerrado: a devolução (sobra/excedente) cai numa linha só por área+ano
+  // (Etapa 8) — busca qual é, para exibir na trilha de auditoria.
+  let linhaDevolucao = null;
+  if (pai?.status === 'encerrado' && pai.plano_id) {
+    const { data: areaId } = await sb.rpc('area_do_setor_emp', { p_empresa: pai.empresa_id, p_setor: pai.setor_id });
+    const setorIds = areaId
+      ? (await sb.from('empresa_setores').select('setor_id').eq('empresa_id', pai.empresa_id).eq('area_id', areaId)).data?.map(s => s.setor_id) || []
+      : [pai.setor_id];
+    if (setorIds.length) {
+      const { data: linha } = await sb.from('linhas_plano').select('descricao,valor')
+        .eq('plano_id', pai.plano_id).eq('tipo', 'devolucao').eq('cancelada', false).in('setor_id', setorIds).maybeSingle();
+      linhaDevolucao = linha || null;
+    }
+  }
+
+  return { pai, itens: itens || [], anexos: anexos || [], vinculos: vinculos || [], historico: historico || [], linhaDevolucao };
 }
 
 export async function abrirDetalhePai(paiId, etapaAtual) {
@@ -123,11 +140,14 @@ export async function abrirDetalhePai(paiId, etapaAtual) {
   overlay.innerHTML = '<div class="modal modal-lg"><div class="loading"><div class="spinner"></div> Carregando...</div></div>';
   document.body.appendChild(overlay);
 
-  const { pai, itens, anexos, vinculos } = await carregarDetalhePai(paiId);
+  const { pai, itens, anexos, vinculos, historico, linhaDevolucao } = await carregarDetalhePai(paiId);
   if (!pai) { toast('PAI não encontrado', 'error'); overlay.remove(); return; }
 
   const formalizacao = etapaAtual === 'controladoria_op' && pai.status === 'aprovado';
   const podeReprovar = etapaAtual !== 'controladoria_op';
+  // Sem etapaAtual: é a visão do próprio solicitante (chamada por Meus PAIs,
+  // fora de uma fila de aprovação) — Etapa 8, "Indicar conclusão".
+  const podeIndicarConclusao = !etapaAtual && ['formalizado', 'em_execucao'].includes(pai.status);
 
   overlay.id = 'modal-decisao-pai';
   overlay.querySelector('.modal').innerHTML = `
@@ -170,8 +190,8 @@ export async function abrirDetalhePai(paiId, etapaAtual) {
 
       <div class="form-section">
         <div class="form-section-title">Composição</div>
-        <table><thead><tr><th>Aplicação</th><th class="text-right">Valor</th></tr></thead><tbody>
-          ${itens.map(i => `<tr><td>${i.aplicacao}</td><td class="text-right">${fmtMoeda(i.valor)}</td></tr>`).join('')}
+        <table><thead><tr><th>Aplicação</th><th>Nº do bem</th><th class="text-right">Valor</th></tr></thead><tbody>
+          ${itens.map(i => `<tr><td>${i.aplicacao}</td><td>${i.numero_bem || '—'}</td><td class="text-right">${fmtMoeda(i.valor)}</td></tr>`).join('')}
         </tbody></table>
       </div>
 
@@ -184,28 +204,82 @@ export async function abrirDetalhePai(paiId, etapaAtual) {
         </div>
       </div>
 
+      <div class="form-section">
+        <div class="form-section-title">Trilha de auditoria</div>
+        ${historico.length === 0 ? '<div class="text-xs text-muted">Sem histórico ainda.</div>' : `
+        <div style="display:flex;flex-direction:column;gap:10px">
+          ${historico.map(h => `
+            <div style="display:flex;gap:10px;font-size:13px">
+              <div style="color:var(--text3);white-space:nowrap;min-width:100px">${fmtDate(h.criado_em)}</div>
+              <div>
+                <strong>${h.usuario?.nome || '—'}</strong>
+                <span class="text-muted"> — ${h.de_status ? `${STATUS_PAI_LABELS[h.de_status] || h.de_status} → ` : ''}${STATUS_PAI_LABELS[h.para_status] || h.para_status}</span>
+                ${h.observacao ? `<div style="color:var(--text2);margin-top:2px">${h.observacao}</div>` : ''}
+              </div>
+            </div>`).join('')}
+        </div>`}
+      </div>
+
+      ${pai.status === 'encerrado' ? `
+      <div class="form-section">
+        <div class="form-section-title">Encerramento</div>
+        <div class="info-row">
+          <div class="info-item"><span class="info-label">Saldo apurado</span><span class="info-val" style="color:${pai.saldo_final >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtMoeda(Math.abs(pai.saldo_final))} ${pai.saldo_final >= 0 ? '(sobra)' : '(excedente)'}</span></div>
+          <div class="info-item"><span class="info-label">Encerrado em</span><span class="info-val">${fmtDate(pai.encerrado_em)}</span></div>
+        </div>
+        ${linhaDevolucao ? `<div class="text-xs text-muted" style="margin-top:8px">Lançado na linha de devolução da área: "${linhaDevolucao.descricao}" (saldo atual da linha: ${fmtMoeda(linhaDevolucao.valor)})</div>` : ''}
+      </div>` : ''}
+
       ${formalizacao ? `
       <div class="form-section">
         <div class="form-section-title">Formalização</div>
         <div class="field"><label>Código no MRP *</label><input type="text" id="pai-codigo-mrp" placeholder="ex.: OI-2026-0451"></div>
       </div>` : ''}
 
+      ${etapaAtual ? `
       <div class="form-section">
         <div class="form-section-title">Observação${formalizacao ? ' (opcional)' : ' — obrigatória para devolver ou reprovar'}</div>
         <textarea id="decisao-observacao" rows="3" placeholder="Explique sua decisão..."></textarea>
-      </div>
+      </div>` : ''}
     </div>
     <div class="modal-footer">
       ${formalizacao ? `
         <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
         <button class="btn btn-primary" onclick="confirmarFormalizacao('${paiId}')">Formalizar</button>
-      ` : `
+      ` : etapaAtual ? `
         <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
         ${podeReprovar ? `<button class="btn btn-danger" onclick="confirmarDecisao('${paiId}','${etapaAtual}','reprovado')">Reprovar</button>` : ''}
         <button class="btn btn-warning" onclick="confirmarDecisao('${paiId}','${etapaAtual}','devolvido')">Devolver p/ ajuste</button>
         <button class="btn btn-primary" onclick="confirmarDecisao('${paiId}','${etapaAtual}','aprovado')">Aprovar</button>
+      ` : podeIndicarConclusao ? `
+        <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
+        <button class="btn btn-primary" onclick="onIndicarConclusao('${paiId}')">Indicar conclusão</button>
+      ` : `
+        <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
       `}
     </div>`;
+}
+
+// ═══════════════════════════════════════════════════
+// ETAPA 8 · SOLICITANTE INDICA CONCLUSÃO
+// PAI formalizado/em_execucao -> concluido_solicitante. Vai para a fila de
+// encerramento da Controladoria Contábil (ver encerramento.js).
+// ═══════════════════════════════════════════════════
+export async function onIndicarConclusao(paiId) {
+  const { data: pai, error: erroPai } = await sb.from('pais').select('status').eq('id', paiId).single();
+  if (erroPai || !pai) { toast('Erro ao carregar PAI: ' + (erroPai?.message || ''), 'error'); return; }
+
+  const { error } = await sb.from('pais').update({ status: 'concluido_solicitante' }).eq('id', paiId);
+  if (error) { toast('Erro ao indicar conclusão: ' + error.message, 'error'); return; }
+
+  await sb.from('historico_pai').insert({
+    pai_id: paiId, usuario_id: currentUser.id, de_status: pai.status, para_status: 'concluido_solicitante',
+    observacao: 'Solicitante indicou a conclusão do investimento.', criado_em: new Date().toISOString()
+  });
+
+  document.getElementById('modal-decisao-pai')?.remove();
+  toast('Conclusão indicada — segue para a Controladoria Contábil encerrar');
+  if (aoAtualizar) await aoAtualizar();
 }
 
 export async function confirmarDecisao(paiId, etapa, decisao) {
@@ -291,5 +365,5 @@ export async function confirmarFormalizacao(paiId) {
 // Funções chamadas via atributos inline (onclick) precisam estar em window,
 // pois módulos ES não expõem suas funções no escopo global automaticamente.
 Object.assign(window, {
-  abrirDetalhePai, confirmarDecisao, confirmarFormalizacao
+  abrirDetalhePai, confirmarDecisao, confirmarFormalizacao, onIndicarConclusao
 });

@@ -1,22 +1,23 @@
 import { temPapel } from '../../shared/acesso.js';
 import { renderFragmentoFilaPai, definirCallbackAtualizacao as definirCallbackPai } from './aprovacao.js';
 import { renderFragmentoFilaAumento, definirCallbackAtualizacao as definirCallbackAumento } from './aumento.js';
+import { renderFragmentoFilaEncerramento, definirCallbackAtualizacao as definirCallbackEncerramento } from './encerramento.js';
 
 // ═══════════════════════════════════════════════════
-// TELA CONSOLIDADA "APROVAÇÕES" (Etapa 7b)
+// TELA CONSOLIDADA "APROVAÇÕES" (Etapa 7b, +Etapa 8)
 // Uma aba por papel de aprovação (Controladoria, Superintendente, Diretor,
-// Diretor CEO) — cada aba junta a fila de PAI e a de Aumento de Verba
-// daquele mesmo papel/etapa, para não espalhar ~10 itens soltos no menu.
-// Quem só tem um desses papéis vê uma aba só; quem acumula vê várias
-// (ex.: a conta de teste vanderlei, que é controladoria_op + aprovador +
-// diretor + diretor_ceo).
+// Diretor CEO, Controladoria Contábil) — cada aba junta as filas daquele
+// mesmo papel/etapa (PAI, Aumento de Verba, Encerramento), para não
+// espalhar itens soltos no menu. Quem só tem um desses papéis vê uma aba
+// só; quem acumula vê várias (ex.: a conta de teste vanderlei).
 // ═══════════════════════════════════════════════════
 
 const ABAS = [
-  { chave: 'controladoria', titulo: 'Controladoria Operacional', papel: 'controladoria_op', temPai: true, temAumento: true },
-  { chave: 'aprovador', titulo: 'Superintendente', papel: 'inv_aprovador', temPai: true, temAumento: true },
-  { chave: 'diretor', titulo: 'Diretor da Área', papel: 'diretor', temPai: true, temAumento: true },
-  { chave: 'diretor_ceo', titulo: 'Diretor CEO', papel: 'diretor_ceo', temPai: false, temAumento: true }
+  { chave: 'controladoria', titulo: 'Controladoria Operacional', papel: 'controladoria_op', fontes: ['pai', 'aumento'] },
+  { chave: 'aprovador', titulo: 'Superintendente', papel: 'inv_aprovador', fontes: ['pai', 'aumento'] },
+  { chave: 'diretor', titulo: 'Diretor da Área', papel: 'diretor', fontes: ['pai', 'aumento'] },
+  { chave: 'diretor_ceo', titulo: 'Diretor CEO', papel: 'diretor_ceo', fontes: ['aumento'] },
+  { chave: 'contabil', titulo: 'Controladoria Contábil', papel: 'controladoria_contabil', fontes: ['encerramento'] }
 ];
 
 let abasDisponiveis = [];
@@ -44,13 +45,14 @@ export async function renderAprovacoes() {
   if (!abasDisponiveis.some(a => a.chave === abaAtiva)) abaAtiva = abasDisponiveis[0].chave;
   definirCallbackPai(recarregarAbaAtiva);
   definirCallbackAumento(recarregarAbaAtiva);
+  definirCallbackEncerramento(recarregarAbaAtiva);
   montarTelaAprovacoes();
 }
 
 function montarTelaAprovacoes() {
   const page = document.getElementById('page-content');
   page.innerHTML = `
-    <div class="auth-tabs" style="max-width:${Math.min(720, abasDisponiveis.length * 190)}px;margin-bottom:20px">
+    <div class="auth-tabs" style="max-width:${Math.min(900, abasDisponiveis.length * 190)}px;margin-bottom:20px">
       ${abasDisponiveis.map(a => `<button class="auth-tab ${a.chave === abaAtiva ? 'active' : ''}" onclick="onTrocarAbaAprovacoes('${a.chave}')">${a.titulo}</button>`).join('')}
     </div>
     <div id="aprovacoes-conteudo" style="display:flex;flex-direction:column;gap:20px"><div class="loading"><div class="spinner"></div> Carregando...</div></div>`;
@@ -67,10 +69,11 @@ async function recarregarAbaAtiva() {
   if (!conteudo) return;
   const aba = abasDisponiveis.find(a => a.chave === abaAtiva);
   if (!aba) return;
-  const partes = await Promise.all([
-    aba.temPai ? renderFragmentoFilaPai(aba.chave) : null,
-    aba.temAumento ? renderFragmentoFilaAumento(aba.chave) : null
-  ]);
+  const partes = await Promise.all(aba.fontes.map(f =>
+    f === 'pai' ? renderFragmentoFilaPai(aba.chave)
+      : f === 'aumento' ? renderFragmentoFilaAumento(aba.chave)
+      : renderFragmentoFilaEncerramento()
+  ));
   conteudo.innerHTML = partes.filter(Boolean).join('');
 }
 

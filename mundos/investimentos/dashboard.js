@@ -3,18 +3,21 @@ import { toast, fmtDate } from '../../shared/ui.js';
 import { currentUser } from './auth.js';
 import { abrirNovoPai } from './solicitacao.js';
 import { renderConteudoAumentos } from './aumento.js';
+import { abrirDetalhePai, definirCallbackAtualizacao } from './aprovacao.js';
 
 // ═══════════════════════════════════════════════════
 // LABELS
 // ═══════════════════════════════════════════════════
 export const STATUS_PAI_LABELS = {
   rascunho: 'Rascunho', em_critica: 'Em Crítica', aprovado: 'Aprovado',
-  reprovado: 'Reprovado', formalizado: 'Formalizado', encerrado: 'Encerrado',
+  reprovado: 'Reprovado', formalizado: 'Formalizado', em_execucao: 'Em Execução',
+  concluido_solicitante: 'Conclusão Indicada', encerrado: 'Encerrado',
   devolvido: 'Devolvido'
 };
 export const STATUS_PAI_BADGE = {
   rascunho: 'badge-rascunho', em_critica: 'badge-em_critica', aprovado: 'badge-success',
-  reprovado: 'badge-danger', formalizado: 'badge-execucao', encerrado: 'badge-concluido',
+  reprovado: 'badge-danger', formalizado: 'badge-execucao', em_execucao: 'badge-execucao',
+  concluido_solicitante: 'badge-revisao', encerrado: 'badge-concluido',
   devolvido: 'badge-pendente'
 };
 export const TIPO_INVESTIMENTO_LABELS = {
@@ -60,6 +63,7 @@ export async function onTabMeusPais(aba) {
 async function montarConteudoMeusPais() {
   const conteudo = document.getElementById('meus-pais-conteudo');
   if (!conteudo) return;
+  if (abaMeusPais === 'pais') definirCallbackAtualizacao(montarConteudoMeusPais);
   conteudo.innerHTML = abaMeusPais === 'pais' ? await renderConteudoPais() : await renderConteudoAumentos();
 }
 
@@ -83,7 +87,7 @@ async function renderConteudoPais() {
         <thead><tr><th>Número</th><th>Título</th><th>Empresa</th><th>Área</th><th>Ano</th><th>Tipo</th><th class="text-right">Valor</th><th>Status</th><th>Criado em</th></tr></thead>
         <tbody>
           ${(pais || []).map(p => `
-            <tr onclick="${['rascunho', 'devolvido'].includes(p.status) ? `abrirNovoPai('${p.id}')` : ''}" style="${['rascunho', 'devolvido'].includes(p.status) ? 'cursor:pointer' : ''}">
+            <tr onclick="${['rascunho', 'devolvido'].includes(p.status) ? `abrirNovoPai('${p.id}')` : `abrirDetalhePai('${p.id}')`}" style="cursor:pointer">
               <td><span class="font-mono text-xs" style="color:var(--accent)">${p.numero || '— rascunho —'}</span></td>
               <td><strong>${p.titulo || '—'}</strong></td>
               <td><span class="text-muted text-sm">${p.empresas?.nome || '—'}</span></td>

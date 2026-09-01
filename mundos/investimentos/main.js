@@ -11,14 +11,15 @@ export async function montarMundoInvestimentos(usuario) {
   document.getElementById('topbar-title').textContent = 'Investimentos';
   document.getElementById('topbar-actions').innerHTML = '';
 
-  const [souSolicitante, souControladoria, souAprovador, souDiretor, souDiretorCeo] = await Promise.all([
+  const [souSolicitante, souControladoria, souAprovador, souDiretor, souDiretorCeo, souContabil] = await Promise.all([
     temPapel('investimentos', 'inv_solicitante'),
     temPapel('investimentos', 'controladoria_op'),
     temPapel('investimentos', 'inv_aprovador'),
     temPapel('investimentos', 'diretor'),
-    temPapel('investimentos', 'diretor_ceo')
+    temPapel('investimentos', 'diretor_ceo'),
+    temPapel('investimentos', 'controladoria_contabil')
   ]);
-  const souAprovadorDeAlgumaEtapa = souControladoria || souAprovador || souDiretor || souDiretorCeo;
+  const souAprovadorDeAlgumaEtapa = souControladoria || souAprovador || souDiretor || souDiretorCeo || souContabil;
 
   const papeis = [];
   if (souSolicitante) papeis.push('Solicitante');
@@ -26,6 +27,7 @@ export async function montarMundoInvestimentos(usuario) {
   if (souAprovador) papeis.push('Superintendente');
   if (souDiretor) papeis.push('Diretor');
   if (souDiretorCeo) papeis.push('Diretor CEO');
+  if (souContabil) papeis.push('Controladoria Contábil');
 
   document.getElementById('sidebar-nav').innerHTML = `
     <div class="nav-section">
