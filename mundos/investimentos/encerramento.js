@@ -46,7 +46,7 @@ export async function renderFragmentoFilaEncerramento() {
       <div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">Fila vazia</div><div class="empty-desc">Nenhum PAI com conclusão indicada aguardando encerramento.</div></div>` : `
       <div style="overflow-x:auto">
       <table>
-        <thead><tr><th>Número</th><th>Título</th><th>Empresa</th><th>Área/Setor</th><th class="text-right">Valor aprovado</th><th>Solicitante</th></tr></thead>
+        <thead><tr><th>Número</th><th>Título</th><th>Empresa</th><th>Área/Setor</th><th class="text-right">Valor aprovado</th><th>Solicitante</th><th>Previsão de conclusão</th></tr></thead>
         <tbody>
           ${pais.map(p => `
             <tr onclick="abrirEncerramentoPai('${p.id}')">
@@ -56,6 +56,7 @@ export async function renderFragmentoFilaEncerramento() {
               <td>${p.setores?.nome || '—'}</td>
               <td class="text-right">${fmtMoeda(p.valor_total)}</td>
               <td>${p.solicitante?.nome || '—'}</td>
+              <td style="color:${p.previsao_conclusao && p.previsao_conclusao < new Date().toISOString().slice(0, 10) ? 'var(--red)' : 'inherit'}">${fmtDate(p.previsao_conclusao) || '—'}</td>
             </tr>`).join('')}
         </tbody>
       </table>
@@ -108,6 +109,7 @@ function renderModalEncerramento(pai) {
         <div class="info-item"><span class="info-label">Área/Setor</span><span class="info-val">${pai.setores?.nome || '—'}</span></div>
         <div class="info-item"><span class="info-label">Solicitante</span><span class="info-val">${pai.solicitante?.nome || '—'}</span></div>
         <div class="info-item"><span class="info-label">Valor aprovado</span><span class="info-val">${fmtMoeda(pai.valor_total)}</span></div>
+        <div class="info-item"><span class="info-label">Previsão de conclusão</span><span class="info-val">${fmtDate(pai.previsao_conclusao) || '—'}</span></div>
       </div>
 
       <div class="form-section">

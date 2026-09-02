@@ -174,6 +174,7 @@ export async function abrirDetalhePai(paiId, etapaAtual) {
         <div class="info-item"><span class="info-label">Ano</span><span class="info-val">${pai.ano_calendario}</span></div>
         <div class="info-item"><span class="info-label">Enviado em</span><span class="info-val">${fmtDate(pai.enviado_em)}</span></div>
         <div class="info-item"><span class="info-label">Reserva expira</span><span class="info-val">${fmtDate(pai.reserva_expira_em)}</span></div>
+        ${pai.previsao_conclusao ? `<div class="info-item"><span class="info-label">Previsão de conclusão</span><span class="info-val">${fmtDate(pai.previsao_conclusao)}</span></div>` : ''}
       </div>
 
       <div class="form-section">
@@ -233,7 +234,10 @@ export async function abrirDetalhePai(paiId, etapaAtual) {
       ${formalizacao ? `
       <div class="form-section">
         <div class="form-section-title">Formalização</div>
-        <div class="field"><label>Código no MRP *</label><input type="text" id="pai-codigo-mrp" placeholder="ex.: OI-2026-0451"></div>
+        <div class="form-row">
+          <div class="field"><label>Código no MRP *</label><input type="text" id="pai-codigo-mrp" placeholder="ex.: OI-2026-0451"></div>
+          <div class="field"><label>Previsão de conclusão *</label><input type="date" id="pai-previsao-conclusao"></div>
+        </div>
       </div>` : ''}
 
       ${etapaAtual ? `
@@ -336,7 +340,9 @@ async function registrarDecisao(paiId, etapa, decisao, observacao) {
 
 export async function confirmarFormalizacao(paiId) {
   const codigoMrp = document.getElementById('pai-codigo-mrp').value.trim();
+  const previsaoConclusao = document.getElementById('pai-previsao-conclusao').value;
   if (!codigoMrp) { toast('Informe o código do investimento no MRP', 'error'); return; }
+  if (!previsaoConclusao) { toast('Informe a previsão de conclusão', 'error'); return; }
   const observacao = document.getElementById('decisao-observacao').value.trim();
 
   const { data: passo } = await sb.from('passos_aprovacao').select('*')
@@ -349,7 +355,7 @@ export async function confirmarFormalizacao(paiId) {
   }).eq('id', passo.id);
   if (erroPasso) { toast('Erro ao registrar formalização: ' + erroPasso.message, 'error'); return; }
 
-  const { error: erroPai } = await sb.from('pais').update({ status: 'formalizado', mrp_codigo: codigoMrp }).eq('id', paiId);
+  const { error: erroPai } = await sb.from('pais').update({ status: 'formalizado', mrp_codigo: codigoMrp, previsao_conclusao: previsaoConclusao }).eq('id', paiId);
   if (erroPai) { toast('Erro ao formalizar PAI: ' + erroPai.message, 'error'); return; }
 
   await sb.from('historico_pai').insert({
