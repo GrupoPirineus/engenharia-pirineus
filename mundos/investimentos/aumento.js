@@ -4,6 +4,7 @@ import { temPapel } from '../../shared/acesso.js';
 import { currentUser } from './auth.js';
 import { badgeStatusPai, fmtMoeda } from './dashboard.js';
 import { resolverEscoposSolicitante } from './solicitacao.js';
+import { imprimirAumento } from './pdf.js';
 
 // ═══════════════════════════════════════════════════
 // FLUXO DE AUMENTO DE VERBA (Etapa 7)
@@ -32,8 +33,24 @@ function numOrZero(v) { const n = parseFloat(v); return isNaN(n) ? 0 : n; }
 // ═══════════════════════════════════════════════════
 let estadoForm = null;
 
+async function carregarTiposInvestimento() {
+  const { data, error } = await sb.from('tipos_investimento').select('*').eq('ativo', true).order('ordem');
+  if (error) { console.error('Erro ao carregar tipos de investimento:', error); return []; }
+  return data || [];
+}
+
+// Valor remanescente = saldo livre do bolo da área (empresa+setor+ano),
+// já conhecido pelo sistema (saldo_areas, Etapa 6) — não é digitado.
+async function buscarRemanescente(empresaId, setorId, ano) {
+  const { data: areaId } = await sb.rpc('area_do_setor_emp', { p_empresa: empresaId, p_setor: setorId });
+  if (!areaId) return 0;
+  const { data } = await sb.from('saldo_areas').select('livre')
+    .eq('empresa_id', empresaId).eq('ano_calendario', ano).eq('area_id', areaId).maybeSingle();
+  return numOrZero(data?.livre);
+}
+
 export async function abrirModalSolicitarAumento(prefill) {
-  const escopos = await resolverEscoposSolicitante();
+  const [escopos, tiposInvestimento] = await Promise.all([resolverEscoposSolicitante(), carregarTiposInvestimento()]);
   if (!escopos.length) {
     toast('Sem área de investimento atribuída para solicitar aumento de verba', 'error');
     return;
@@ -45,10 +62,17 @@ export async function abrirModalSolicitarAumento(prefill) {
     if (idx >= 0) escopoIdx = idx;
   }
   const anoAtual = new Date().getFullYear();
+  const ano = prefill?.ano || anoAtual;
+  const esc = escopos[escopoIdx];
+
+  const remanescente = prefill?.remanescente !== undefined
+    ? numOrZero(prefill.remanescente)
+    : await buscarRemanescente(esc.empresaId, esc.setorId, ano);
+
   estadoForm = {
-    escopos, escopoIdx,
-    ano: prefill?.ano || anoAtual,
-    valor: numOrZero(prefill?.valorSugerido),
+    escopos, escopoIdx, tiposInvestimento, ano, remanescente,
+    valorInvestimento: numOrZero(prefill?.valorInvestimento),
+    tipo: prefill?.tipo || tiposInvestimento[0]?.nome || '',
     justificativa: ''
   };
 
@@ -61,6 +85,7 @@ export async function abrirModalSolicitarAumento(prefill) {
 
 function renderModalSolicitarAumento(anoAtual) {
   const esc = estadoForm.escopos[estadoForm.escopoIdx];
+  const aumentoNecessario = Math.max(0, estadoForm.valorInvestimento - estadoForm.remanescente);
   return `
     <div class="modal">
       <div class="modal-header">
@@ -78,19 +103,35 @@ function renderModalSolicitarAumento(anoAtual) {
         </div>` : `
         <div class="form-row">
           <div class="field"><label>Empresa</label><input value="${esc.empresaNome}" disabled></div>
-          <div class="field"><label>Área</label><input value="${esc.setorNome}" disabled></div>
+          <div class="field"><label>Setor</label><input value="${esc.setorNome}" disabled></div>
         </div>`}
+        <div class="field"><label>Ano-calendário</label>
+          <select id="aumento-ano" onchange="onAumentoAnoChange(this.value)">
+            <option value="${anoAtual}" ${estadoForm.ano === anoAtual ? 'selected' : ''}>${anoAtual} · vigente</option>
+            <option value="${anoAtual + 1}" ${estadoForm.ano === anoAtual + 1 ? 'selected' : ''}>${anoAtual + 1} · disponível (entressafra)</option>
+          </select>
+        </div>
+
         <div class="form-row">
-          <div class="field"><label>Ano-calendário</label>
-            <select id="aumento-ano" onchange="onAumentoAnoChange(this.value)">
-              <option value="${anoAtual}" ${estadoForm.ano === anoAtual ? 'selected' : ''}>${anoAtual} · vigente</option>
-              <option value="${anoAtual + 1}" ${estadoForm.ano === anoAtual + 1 ? 'selected' : ''}>${anoAtual + 1} · disponível (entressafra)</option>
-            </select>
+          <div class="field"><label>Valor do investimento *</label>
+            <input type="number" min="0" step="0.01" id="aumento-valor-investimento" value="${estadoForm.valorInvestimento || ''}" placeholder="0" oninput="onAumentoValorInvestimentoInput(this.value)">
           </div>
-          <div class="field"><label>Valor do aumento *</label>
-            <input type="number" min="0" step="0.01" id="aumento-valor" value="${estadoForm.valor || ''}" placeholder="0" oninput="onAumentoValorInput(this.value)">
+          <div class="field"><label>Valor remanescente</label>
+            <input type="text" value="${fmtMoeda(estadoForm.remanescente)}" disabled style="color:var(--text2)">
           </div>
         </div>
+        <div class="field">
+          <label>Aumento necessário</label>
+          <input type="text" id="aumento-necessario-preview" value="${fmtMoeda(aumentoNecessario)}" disabled style="font-size:20px;font-weight:700;color:var(--accent)">
+        </div>
+
+        <div class="field"><label>Tipo de investimento</label>
+          <select id="aumento-tipo" onchange="onAumentoTipoChange(this.value)">
+            ${estadoForm.tiposInvestimento.length === 0 ? '<option value="">Nenhum tipo cadastrado</option>' : ''}
+            ${estadoForm.tiposInvestimento.map(t => `<option value="${t.nome}" ${estadoForm.tipo === t.nome ? 'selected' : ''}>${t.nome}</option>`).join('')}
+          </select>
+        </div>
+
         <div class="field">
           <label>Justificativa *</label>
           <textarea id="aumento-justificativa" rows="4" oninput="onAumentoJustificativaInput(this.value)" placeholder="Explique por que o teto da área precisa aumentar...">${estadoForm.justificativa}</textarea>
@@ -104,20 +145,41 @@ function renderModalSolicitarAumento(anoAtual) {
     </div>`;
 }
 
-function onAumentoEscopoChange(v) { estadoForm.escopoIdx = parseInt(v, 10); }
-function onAumentoAnoChange(v) { estadoForm.ano = parseInt(v, 10); }
-function onAumentoValorInput(v) { estadoForm.valor = numOrZero(v); }
+async function onAumentoEscopoChange(v) {
+  estadoForm.escopoIdx = parseInt(v, 10);
+  const esc = estadoForm.escopos[estadoForm.escopoIdx];
+  estadoForm.remanescente = await buscarRemanescente(esc.empresaId, esc.setorId, estadoForm.ano);
+  atualizarModalAumento();
+}
+async function onAumentoAnoChange(v) {
+  estadoForm.ano = parseInt(v, 10);
+  const esc = estadoForm.escopos[estadoForm.escopoIdx];
+  estadoForm.remanescente = await buscarRemanescente(esc.empresaId, esc.setorId, estadoForm.ano);
+  atualizarModalAumento();
+}
+function onAumentoValorInvestimentoInput(v) { estadoForm.valorInvestimento = numOrZero(v); atualizarPreviaAumento(); }
+function onAumentoTipoChange(v) { estadoForm.tipo = v; }
 function onAumentoJustificativaInput(v) { estadoForm.justificativa = v; }
+
+function atualizarPreviaAumento() {
+  const el = document.getElementById('aumento-necessario-preview');
+  if (el) el.value = fmtMoeda(Math.max(0, estadoForm.valorInvestimento - estadoForm.remanescente));
+}
+function atualizarModalAumento() {
+  const overlay = document.getElementById('modal-solicitar-aumento');
+  if (overlay) overlay.querySelector('.modal').innerHTML = renderModalSolicitarAumento(new Date().getFullYear());
+}
 
 async function onEnviarAumento() {
   const erroEl = document.getElementById('aumento-erro');
   erroEl.textContent = '';
 
   const esc = estadoForm.escopos[estadoForm.escopoIdx];
-  const valor = numOrZero(estadoForm.valor);
+  const valor = Math.max(0, estadoForm.valorInvestimento - estadoForm.remanescente);
   const justificativa = (estadoForm.justificativa || '').trim();
 
-  if (valor <= 0) { erroEl.textContent = 'Informe um valor maior que zero.'; return; }
+  if (estadoForm.valorInvestimento <= 0) { erroEl.textContent = 'Informe o valor do investimento.'; return; }
+  if (valor <= 0) { erroEl.textContent = 'O valor do investimento já cabe no remanescente — não há aumento necessário.'; return; }
   if (!justificativa) { erroEl.textContent = 'A justificativa é obrigatória.'; return; }
 
   const { data: numero, error: erroNumero } = await sb.rpc('gerar_numero_aumento', { p_ano: estadoForm.ano });
@@ -128,7 +190,8 @@ async function onEnviarAumento() {
 
   const { data: aumento, error: erroInsert } = await sb.from('aumentos_verba').insert({
     numero, empresa_id: esc.empresaId, setor_id: esc.setorId, ano_calendario: estadoForm.ano,
-    valor, justificativa, solicitante_id: currentUser.id, status: 'em_critica', plano_id: plano?.id || null
+    valor, valor_investimento: estadoForm.valorInvestimento, tipo: estadoForm.tipo || null,
+    justificativa, solicitante_id: currentUser.id, status: 'em_critica', plano_id: plano?.id || null
   }).select('id').single();
   if (erroInsert) { toast('Erro ao enviar aumento de verba: ' + erroInsert.message, 'error'); return; }
 
@@ -162,7 +225,7 @@ export async function renderConteudoAumentos() {
         <thead><tr><th>Número</th><th>Empresa</th><th>Área</th><th>Ano</th><th class="text-right">Valor</th><th>Status</th><th>Criado em</th></tr></thead>
         <tbody>
           ${aumentos.map(a => `
-            <tr>
+            <tr onclick="abrirDetalheAumento('${a.id}')" style="cursor:pointer">
               <td><span class="font-mono text-xs" style="color:var(--accent)">${a.numero || '—'}</span></td>
               <td><span class="text-muted text-sm">${a.empresas?.nome || '—'}</span></td>
               <td><span class="text-muted text-sm">${a.setores?.nome || '—'}</span></td>
@@ -260,6 +323,9 @@ export async function abrirDetalheAumento(aumentoId, etapaAtual) {
     .eq('id', aumentoId).single();
   if (error || !aumento) { toast('Aumento de verba não encontrado', 'error'); overlay.remove(); return; }
 
+  const podeGerarPdf = aumento.status === 'aprovado';
+  const remanescente = aumento.valor_investimento != null ? aumento.valor_investimento - aumento.valor : null;
+
   overlay.id = 'modal-decisao-aumento';
   overlay.querySelector('.modal').innerHTML = `
     <div class="modal-header">
@@ -270,33 +336,46 @@ export async function abrirDetalheAumento(aumentoId, etapaAtual) {
         </div>
         <h2>Aumento de verba</h2>
       </div>
-      <button class="close-btn" onclick="this.closest('.modal-overlay').remove()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
+      <div style="display:flex;align-items:center;gap:8px">
+        ${podeGerarPdf ? `<button class="btn btn-secondary btn-sm" onclick="imprimirAumento('${aumentoId}')">🖨️ Gerar PDF</button>` : ''}
+        <button class="close-btn" onclick="this.closest('.modal-overlay').remove()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
     </div>
     <div class="modal-body">
       <div class="info-row">
         <div class="info-item"><span class="info-label">Empresa</span><span class="info-val">${aumento.empresas?.nome || '—'}</span></div>
-        <div class="info-item"><span class="info-label">Área/Setor</span><span class="info-val">${aumento.setores?.nome || '—'}</span></div>
+        <div class="info-item"><span class="info-label">Setor</span><span class="info-val">${aumento.setores?.nome || '—'}</span></div>
         <div class="info-item"><span class="info-label">Ano</span><span class="info-val">${aumento.ano_calendario}</span></div>
-        <div class="info-item"><span class="info-label">Valor</span><span class="info-val">${fmtMoeda(aumento.valor)}</span></div>
+        <div class="info-item"><span class="info-label">Tipo</span><span class="info-val">${aumento.tipo || '—'}</span></div>
         <div class="info-item"><span class="info-label">Solicitante</span><span class="info-val">${aumento.solicitante?.nome || '—'}</span></div>
         <div class="info-item"><span class="info-label">Enviado em</span><span class="info-val">${fmtDate(aumento.criado_em)}</span></div>
+      </div>
+      <div class="info-row">
+        <div class="info-item"><span class="info-label">Valor do investimento</span><span class="info-val">${aumento.valor_investimento != null ? fmtMoeda(aumento.valor_investimento) : '—'}</span></div>
+        <div class="info-item"><span class="info-label">Valor remanescente</span><span class="info-val">${remanescente != null ? fmtMoeda(remanescente) : '—'}</span></div>
+        <div class="info-item"><span class="info-label">Aumento necessário</span><span class="info-val">${fmtMoeda(aumento.valor)}</span></div>
       </div>
       <div class="form-section">
         <div class="form-section-title">Justificativa</div>
         <p style="color:var(--text2);line-height:1.7;font-size:13px">${aumento.justificativa}</p>
       </div>
+      ${etapaAtual ? `
       <div class="form-section">
         <div class="form-section-title">Observação — obrigatória para devolver ou reprovar</div>
         <textarea id="decisao-aumento-observacao" rows="3" placeholder="Explique sua decisão..."></textarea>
-      </div>
+      </div>` : ''}
     </div>
     <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
-      <button class="btn btn-danger" onclick="confirmarDecisaoAumento('${aumentoId}','${etapaAtual}','reprovado')">Reprovar</button>
-      <button class="btn btn-warning" onclick="confirmarDecisaoAumento('${aumentoId}','${etapaAtual}','devolvido')">Devolver p/ ajuste</button>
-      <button class="btn btn-primary" onclick="confirmarDecisaoAumento('${aumentoId}','${etapaAtual}','aprovado')">Aprovar</button>
+      ${etapaAtual ? `
+        <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+        <button class="btn btn-danger" onclick="confirmarDecisaoAumento('${aumentoId}','${etapaAtual}','reprovado')">Reprovar</button>
+        <button class="btn btn-warning" onclick="confirmarDecisaoAumento('${aumentoId}','${etapaAtual}','devolvido')">Devolver p/ ajuste</button>
+        <button class="btn btn-primary" onclick="confirmarDecisaoAumento('${aumentoId}','${etapaAtual}','aprovado')">Aprovar</button>
+      ` : `
+        <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
+      `}
     </div>`;
 }
 
@@ -363,6 +442,7 @@ async function registrarDecisaoAumento(aumentoId, etapa, decisao, observacao) {
 // Funções chamadas via atributos inline (onclick/onchange) precisam estar em window,
 // pois módulos ES não expõem suas funções no escopo global automaticamente.
 Object.assign(window, {
-  abrirModalSolicitarAumento, onAumentoEscopoChange, onAumentoAnoChange, onAumentoValorInput, onAumentoJustificativaInput, onEnviarAumento,
+  abrirModalSolicitarAumento, onAumentoEscopoChange, onAumentoAnoChange, onAumentoValorInvestimentoInput,
+  onAumentoTipoChange, onAumentoJustificativaInput, onEnviarAumento,
   abrirDetalheAumento, confirmarDecisaoAumento
 });

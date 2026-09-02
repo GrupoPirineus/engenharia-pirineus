@@ -2,6 +2,7 @@ import { sb } from '../../shared/supabase.js';
 import { toast, fmtDate } from '../../shared/ui.js';
 import { currentUser } from './auth.js';
 import { badgeStatusPai, fmtMoeda, TIPO_INVESTIMENTO_LABELS, STATUS_PAI_LABELS } from './dashboard.js';
+import { imprimirPai } from './pdf.js';
 
 // ═══════════════════════════════════════════════════
 // MOTOR DE APROVAÇÃO DO PAI (Etapa 4)
@@ -148,6 +149,8 @@ export async function abrirDetalhePai(paiId, etapaAtual) {
   // Sem etapaAtual: é a visão do próprio solicitante (chamada por Meus PAIs,
   // fora de uma fila de aprovação) — Etapa 8, "Indicar conclusão".
   const podeIndicarConclusao = !etapaAtual && ['formalizado', 'em_execucao'].includes(pai.status);
+  // PDF oficial: só quando já saiu da fase de aprovação (Etapa 11).
+  const podeGerarPdf = ['formalizado', 'em_execucao', 'concluido_solicitante', 'encerrado'].includes(pai.status);
 
   overlay.id = 'modal-decisao-pai';
   overlay.querySelector('.modal').innerHTML = `
@@ -160,9 +163,12 @@ export async function abrirDetalhePai(paiId, etapaAtual) {
         </div>
         <h2>${pai.titulo}</h2>
       </div>
-      <button class="close-btn" onclick="this.closest('.modal-overlay').remove()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
+      <div style="display:flex;align-items:center;gap:8px">
+        ${podeGerarPdf ? `<button class="btn btn-secondary btn-sm" onclick="imprimirPai('${paiId}')">🖨️ Gerar PDF</button>` : ''}
+        <button class="close-btn" onclick="this.closest('.modal-overlay').remove()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
     </div>
     <div class="modal-body">
       <div class="info-row">

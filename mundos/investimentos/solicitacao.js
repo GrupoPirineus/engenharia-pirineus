@@ -487,7 +487,10 @@ function onItemValorInput(i, valor) { estado.itens[i].valor = numOrZero(valor); 
 function onSolicitarAumentoVerba() {
   const esc = estado.escopos[estado.escopoIdx];
   const c = calcular();
-  abrirModalSolicitarAumento({ empresaId: esc.empresaId, setorId: esc.setorId, ano: estado.ano, valorSugerido: c.faltam });
+  abrirModalSolicitarAumento({
+    empresaId: esc.empresaId, setorId: esc.setorId, ano: estado.ano,
+    valorInvestimento: c.valorTotal, remanescente: c.somaLivre, tipo: estado.tipo
+  });
 }
 
 function onAddItem() {
