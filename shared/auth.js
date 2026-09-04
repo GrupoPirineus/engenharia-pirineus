@@ -3,9 +3,10 @@ import { setPage, show, hide } from './ui.js';
 
 // ═══════════════════════════════════════════════════
 // AUTENTICAÇÃO — "quem está logado"
-// Hoje: e-mail/senha (Supabase Auth). A troca futura para Google Workspace
-// (signInWithOAuth, restrito a @grupopirineus.com.br) só muda o que está
-// neste arquivo — o resto do portal só conhece obterUsuarioLogado().
+// E-mail/senha e Google Workspace convivem (Etapa 12) — os dois só
+// precisam estabelecer uma sessão Supabase; o resto do portal só conhece
+// obterUsuarioLogado(), que já casa a sessão com `usuarios` por e-mail/id
+// independente de qual provedor a criou.
 // ═══════════════════════════════════════════════════
 
 // Linha da tabela `usuarios` de quem está logado agora (ou null).
@@ -38,6 +39,23 @@ export async function doLogin() {
       ? 'Usuário bloqueado. Contate seu gestor.'
       : (msgs[error.message] || error.message);
     msg.innerHTML = `<p class="error-msg">${textoFinal}</p>`;
+  }
+}
+
+// Google Workspace (provedor já ativado/validado no Supabase — Client
+// ID/Secret, consent screen Internal restrito a @grupopirineus.com.br,
+// redirect URI confirmado). O retorno do OAuth recarrega a página nesta
+// mesma URL; a partir daí é o boot normal (initSession/casca) que resolve
+// a sessão via obterUsuarioLogado() — nenhuma lógica nova precisa saber
+// que o login veio do Google.
+export async function doLoginGoogle() {
+  const { error } = await sb.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: window.location.origin + window.location.pathname }
+  });
+  if (error) {
+    const msg = document.getElementById('login-msg');
+    if (msg) msg.innerHTML = `<p class="error-msg">${error.message}</p>`;
   }
 }
 
@@ -128,9 +146,13 @@ export async function obterUsuarioLogado() {
   console.error('Erro ao carregar usuário:', error);
   const { data: authUser } = await sb.auth.getUser();
   if (authUser?.user) {
+    // nome: signup e-mail/senha grava em user_metadata.nome; o Google
+    // grava full_name/name (claim padrão do provedor) — tenta os três
+    // antes de cair no prefixo do e-mail.
+    const nomeGoogle = authUser.user.user_metadata?.nome || authUser.user.user_metadata?.full_name || authUser.user.user_metadata?.name;
     await sb.from('usuarios').upsert({
       id: authUser.user.id,
-      nome: authUser.user.user_metadata?.nome || authUser.user.email.split('@')[0],
+      nome: nomeGoogle || authUser.user.email.split('@')[0],
       email: authUser.user.email,
       perfil: 'solicitante'
     });
@@ -144,6 +166,6 @@ export async function obterUsuarioLogado() {
 // Funções chamadas via atributos inline (onclick) precisam estar em window,
 // pois módulos ES não expõem suas funções no escopo global automaticamente.
 Object.assign(window, {
-  switchAuthTab, doLogin, doRegister, toggleSenha,
+  switchAuthTab, doLogin, doLoginGoogle, doRegister, toggleSenha,
   abrirRecuperarSenha, enviarRecuperacao, fazerLogout
 });
