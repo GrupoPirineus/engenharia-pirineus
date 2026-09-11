@@ -206,6 +206,7 @@ export async function abrirFichaUsuario(usuarioId) {
         <button class="btn btn-sm ${usuario.ativo === false ? 'btn-success' : 'btn-warning'}" onclick="alternarBloqueioAdmin('${usuario.id}','${usuario.nome.replace(/'/g, "\\'")}', ${usuario.ativo === false ? 'false' : 'true'})">
           ${usuario.ativo === false ? 'Liberar acesso' : 'Bloquear'}
         </button>
+        <button class="btn btn-danger btn-sm" onclick="confirmarExclusaoUsuario('${usuario.id}','${usuario.nome.replace(/'/g, "\\'")}')">Excluir usuário</button>
         <button class="btn btn-secondary" onclick="document.getElementById('modal-ficha-usuario').remove()">Fechar</button>
       </div>
     </div>`;
@@ -283,9 +284,79 @@ export async function alternarBloqueioAdmin(userId, nome, bloquear) {
   }
 }
 
+// ─── Excluir usuário (edge function excluir-usuario, mesmo padrão da
+// bloquear-usuario: service role por trás, só master pode chamar) ───
+// Ação irreversível — confirmação pelo modal do app, não confirm() nativo.
+export function confirmarExclusaoUsuario(userId, nome) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'modal-confirmar-exclusao';
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:420px">
+      <div class="modal-header">
+        <h2>Excluir usuário</h2>
+        <button class="close-btn" onclick="document.getElementById('modal-confirmar-exclusao').remove()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:13px;line-height:1.6;color:var(--text2)">
+          Tem certeza que quer excluir <strong>${nome}</strong>? Isso apaga as atribuições, o cadastro e o login
+          desta pessoa <strong>de forma definitiva</strong> — o e-mail fica livre para um novo cadastro.
+        </p>
+        <p style="font-size:12px;color:var(--text3);margin-top:10px">
+          Se este usuário já tiver PAIs, aumentos de verba ou outro histórico vinculado, a exclusão será recusada —
+          use "Bloquear" nesse caso.
+        </p>
+        <div id="exclusao-erro" class="text-xs" style="color:var(--red);min-height:16px;margin-top:8px"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="document.getElementById('modal-confirmar-exclusao').remove()">Cancelar</button>
+        <button class="btn btn-danger" id="btn-confirmar-exclusao" onclick="executarExclusaoUsuario('${userId}')">Excluir definitivamente</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+export async function executarExclusaoUsuario(userId) {
+  const botao = document.getElementById('btn-confirmar-exclusao');
+  const erroEl = document.getElementById('exclusao-erro');
+  if (erroEl) erroEl.textContent = '';
+  if (botao) { botao.disabled = true; botao.textContent = 'Excluindo...'; }
+
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { toast('Sessão expirada, faça login novamente', 'error'); return; }
+
+  try {
+    const resp = await fetch(`${SUPABASE_URL}/functions/v1/excluir-usuario`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify({ target_id: userId })
+    });
+    const result = await resp.json();
+    if (!resp.ok) {
+      const msg = result.error || 'Falha ao excluir usuário';
+      if (erroEl) { erroEl.textContent = msg; if (botao) { botao.disabled = false; botao.textContent = 'Excluir definitivamente'; } return; }
+      toast(msg, 'error');
+      return;
+    }
+    toast('Usuário excluído');
+    document.getElementById('modal-confirmar-exclusao')?.remove();
+    document.getElementById('modal-ficha-usuario')?.remove();
+    renderListaUsuarios();
+  } catch (e) {
+    if (erroEl) erroEl.textContent = 'Erro de conexão: ' + e.message;
+    if (botao) { botao.disabled = false; botao.textContent = 'Excluir definitivamente'; }
+  }
+}
+
 // Funções chamadas via atributos inline (onclick) precisam estar em window,
 // pois módulos ES não expõem suas funções no escopo global automaticamente.
 Object.assign(window, {
   renderListaUsuarios, abrirFichaUsuario, atualizarPapeisDoMundo,
-  adicionarAtribuicao, removerAtribuicao, alternarBloqueioAdmin, navegarAdmin
+  adicionarAtribuicao, removerAtribuicao, alternarBloqueioAdmin, navegarAdmin,
+  confirmarExclusaoUsuario, executarExclusaoUsuario
 });
