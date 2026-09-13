@@ -133,7 +133,7 @@ function renderModalEncerramento(pai) {
             <div id="encerramento-saldo" style="height:38px;display:flex;align-items:center;font-weight:700;color:${saldo >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtMoeda(Math.abs(saldo))} ${saldo >= 0 ? '(sobra)' : '(excedente)'}</div>
           </div>
         </div>
-        <div class="text-xs text-muted">Sobra volta para o bolo da área; excedente desconta do bolo da área — o "livre" pode ficar negativo.</div>
+        <div class="text-xs text-muted">Sobra vai para o caixa da empresa — não retorna ao bolo da área. Excedente desconta do bolo da área — o "livre" pode ficar negativo.</div>
       </div>
 
       <div class="form-section">
@@ -189,8 +189,14 @@ export async function confirmarEncerramento() {
 
   const saldoFinal = pai.valor_total - realizado;
 
-  const { error: erroDevolucao } = await lancarDevolucao(pai, saldoFinal);
-  if (erroDevolucao) { toast('Erro ao lançar a devolução: ' + erroDevolucao.message, 'error'); return; }
+  // Regra aprovada pela diretoria (Etapa 15): só o excedente (saldo < 0)
+  // volta ao bolo, numa linha tipo=devolucao — débito real contra a área.
+  // Sobra (saldo >= 0) NÃO é mais lançada no bolo: vai para o caixa da
+  // empresa, é só informativa (pais.saldo_final continua gravado).
+  if (saldoFinal < 0) {
+    const { error: erroDevolucao } = await lancarDevolucao(pai, saldoFinal);
+    if (erroDevolucao) { toast('Erro ao lançar a devolução: ' + erroDevolucao.message, 'error'); return; }
+  }
 
   const agora = new Date().toISOString();
   const { error: erroEncerrar } = await sb.from('pais').update({
@@ -198,20 +204,24 @@ export async function confirmarEncerramento() {
   }).eq('id', paiId);
   if (erroEncerrar) { toast('Erro ao encerrar o PAI: ' + erroEncerrar.message, 'error'); return; }
 
-  const resumo = `Encerrado pela Controladoria Contábil. Valor aprovado: ${fmtMoeda(pai.valor_total)}. Valor realizado: ${fmtMoeda(realizado)}. Saldo apurado: ${fmtMoeda(Math.abs(saldoFinal))} (${saldoFinal >= 0 ? 'sobra' : 'excedente'}).`;
+  const destinoSaldo = saldoFinal >= 0 ? 'sobra — vai para o caixa da empresa, não retorna ao bolo' : 'excedente — debitado do bolo da área';
+  const resumo = `Encerrado pela Controladoria Contábil. Valor aprovado: ${fmtMoeda(pai.valor_total)}. Valor realizado: ${fmtMoeda(realizado)}. Saldo apurado: ${fmtMoeda(Math.abs(saldoFinal))} (${destinoSaldo}).`;
   await sb.from('historico_pai').insert({
     pai_id: paiId, usuario_id: currentUser.id, de_status: 'concluido_solicitante', para_status: 'encerrado',
     observacao: observacao ? `${resumo} ${observacao}` : resumo, criado_em: agora
   });
 
   document.getElementById('modal-encerramento-pai')?.remove();
-  toast(`PAI ${pai.numero} encerrado — saldo de ${fmtMoeda(Math.abs(saldoFinal))} (${saldoFinal >= 0 ? 'sobra' : 'excedente'}) lançado na área`);
+  toast(saldoFinal >= 0
+    ? `PAI ${pai.numero} encerrado — sobra de ${fmtMoeda(saldoFinal)} vai para o caixa da empresa`
+    : `PAI ${pai.numero} encerrado — excedente de ${fmtMoeda(Math.abs(saldoFinal))} debitado do bolo da área`);
   if (aoAtualizar) await aoAtualizar();
 }
 
 // Uma linha tipo=devolucao por (plano, área) — mesma área pode ter vários
 // setores (empresa_setores), então a busca cobre todos eles, não só o
-// setor do PAI. Sobra soma, excedente subtrai (valor pode ficar negativo).
+// setor do PAI. Só chamada para saldoFinal < 0 (excedente) — sobra não
+// lança mais linha nenhuma (Etapa 15).
 async function lancarDevolucao(pai, saldoFinal) {
   if (!pai.plano_id) return { error: null }; // PAI sem plano vinculado (não deveria acontecer) — nada a lançar
 

@@ -117,10 +117,12 @@ async function carregarDetalhePai(paiId) {
     sb.from('historico_pai').select('*, usuario:usuario_id(nome)').eq('pai_id', paiId).order('criado_em')
   ]);
 
-  // Encerrado: a devolução (sobra/excedente) cai numa linha só por área+ano
-  // (Etapa 8) — busca qual é, para exibir na trilha de auditoria.
+  // Encerrado com excedente (saldo_final < 0): esse débito cai numa linha
+  // só por área+ano (Etapa 8) — busca qual é, para exibir na trilha de
+  // auditoria. Sobra (saldo_final >= 0) não lança linha nenhuma desde a
+  // Etapa 15 (vai para o caixa da empresa) — nada a buscar nesse caso.
   let linhaDevolucao = null;
-  if (pai?.status === 'encerrado' && pai.plano_id) {
+  if (pai?.status === 'encerrado' && pai.plano_id && pai.saldo_final < 0) {
     const { data: areaId } = await sb.rpc('area_do_setor_emp', { p_empresa: pai.empresa_id, p_setor: pai.setor_id });
     const setorIds = areaId
       ? (await sb.from('empresa_setores').select('setor_id').eq('empresa_id', pai.empresa_id).eq('area_id', areaId)).data?.map(s => s.setor_id) || []
@@ -234,7 +236,9 @@ export async function abrirDetalhePai(paiId, etapaAtual) {
           <div class="info-item"><span class="info-label">Saldo apurado</span><span class="info-val" style="color:${pai.saldo_final >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtMoeda(Math.abs(pai.saldo_final))} ${pai.saldo_final >= 0 ? '(sobra)' : '(excedente)'}</span></div>
           <div class="info-item"><span class="info-label">Encerrado em</span><span class="info-val">${fmtDate(pai.encerrado_em)}</span></div>
         </div>
-        ${linhaDevolucao ? `<div class="text-xs text-muted" style="margin-top:8px">Lançado na linha de devolução da área: "${linhaDevolucao.descricao}" (saldo atual da linha: ${fmtMoeda(linhaDevolucao.valor)})</div>` : ''}
+        ${pai.saldo_final >= 0
+          ? `<div class="text-xs text-muted" style="margin-top:8px">Sobra foi para o caixa da empresa — não retorna ao bolo da área.</div>`
+          : linhaDevolucao ? `<div class="text-xs text-muted" style="margin-top:8px">Excedente debitado na linha de devolução da área: "${linhaDevolucao.descricao}" (saldo atual da linha: ${fmtMoeda(linhaDevolucao.valor)})</div>` : ''}
       </div>` : ''}
 
       ${formalizacao ? `

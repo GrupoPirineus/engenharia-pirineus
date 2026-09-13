@@ -15,11 +15,15 @@ import { resolverEscoposSolicitante } from './solicitacao.js';
 //
 // Fontes: saldo_areas (aprovado/comprometido/livre, Etapa 6) e a view
 // nova realizado_por_area (Etapa 10 — valor_total - saldo_final dos PAIs
-// encerrados, ver migracoes/etapa10_dashboard.sql). "Devolvido" (ao bolo)
-// é a soma das linhas tipo=devolucao de linhas_plano no plano do ano/
-// escopo (o saldo de sobra/excedente que a Etapa 8 lança de volta no
-// encerramento) — não tem relação com pais.status='devolvido', que é
-// devolução para ajuste, um conceito totalmente diferente.
+// encerrados, ver migracoes/etapa10_dashboard.sql). "Ajuste de saldo
+// (débito)" é a soma das linhas tipo=devolucao de linhas_plano no plano
+// do ano/escopo — desde a Etapa 15, só o EXCEDENTE do encerramento
+// (saldo_final < 0) lança/soma nessa linha; sobra (saldo_final >= 0) vai
+// para o caixa da empresa, não entra mais aqui. Linhas já lançadas antes
+// da Etapa 15 podem ter sobra somada ao valor histórico (não há como
+// separar retroativamente por PAI) — o efeito daqui pra frente é só
+// débito. Não tem relação com pais.status='devolvido', que é devolução
+// para ajuste, um conceito totalmente diferente.
 // ═══════════════════════════════════════════════════
 
 const PAPEIS_ALCADA_AMPLA = ['controladoria_op', 'inv_aprovador', 'diretor', 'diretor_ceo', 'controladoria_contabil'];
@@ -117,7 +121,7 @@ async function carregarDados(ano, empresaIds, areaIdsFiltro) {
     paisFiltrados = paisFiltrados.filter(p => areaIdsFiltro.includes(areaDoSetor[`${p.empresa_id}·${p.setor_id}`]));
   }
 
-  // "Devolvido ao bolo" (Etapa 8): soma das linhas tipo=devolucao lançadas
+  // "Ajuste de saldo (débito)" (Etapa 8/15): soma das linhas tipo=devolucao
   // no encerramento — NÃO tem relação com pais.status='devolvido' (que é
   // devolução para ajuste, um conceito diferente).
   let devolucaoFiltrada = devolucaoLinhas || [];
@@ -291,7 +295,7 @@ function renderBloco(dados, chave) {
       <div class="stat-card blue"><div class="stat-label">Aprovado</div><div class="stat-value">${fmtMoeda(totalAprovado)}</div></div>
       <div class="stat-card orange"><div class="stat-label">Comprometido</div><div class="stat-value">${fmtMoeda(totalReservado)}</div></div>
       <div class="stat-card green"><div class="stat-label">Livre</div><div class="stat-value">${fmtMoeda(totalLivre)}</div></div>
-      <div class="stat-card purple"><div class="stat-label">Devolvido</div><div class="stat-value">${fmtMoeda(totalDevolvido)}</div></div>
+      <div class="stat-card purple"><div class="stat-label">Ajuste de saldo (débito)</div><div class="stat-value">${fmtMoeda(totalDevolvido)}</div></div>
     </div>
     <div style="display:grid;grid-template-columns:1.3fr 1fr;gap:20px;margin:20px 0;align-items:start">
       <div class="chart-card">
