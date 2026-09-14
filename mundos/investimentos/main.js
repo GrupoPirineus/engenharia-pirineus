@@ -7,6 +7,7 @@ import { renderMeusPais } from './dashboard.js';
 import { renderAprovacoes } from './aprovacoes.js';
 import { renderPlanoInvestimento } from './plano.js';
 import { renderPainel } from './painel.js';
+import { renderRelatorios } from './relatorios.js';
 
 export async function montarMundoInvestimentos(usuario) {
   document.getElementById('topbar-title').textContent = 'Investimentos';
@@ -38,6 +39,11 @@ export async function montarMundoInvestimentos(usuario) {
       <button class="nav-item" onclick="renderPainel()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-3"/></svg>
         Dashboard
+      </button>` : ''}
+      ${temAlgumPapel ? `
+      <button class="nav-item" onclick="renderRelatorios()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        Relatórios
       </button>` : ''}
       ${souSolicitante ? `
       <button class="nav-item" onclick="abrirMeusPais()">

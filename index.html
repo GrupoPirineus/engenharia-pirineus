@@ -10,6 +10,7 @@
 <!-- v2.1 -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -540,6 +541,26 @@
   /* status do PAI (mundo Investimentos) */
   .badge-rascunho { background: var(--surface2); color: var(--text2); }
   .badge-em_critica { background: var(--blue-dim); color: var(--blue); }
+
+  /* ── CHIP TOGGLE (filtros multi-seleção — Relatórios) ── */
+  .chip-toggle {
+    display: inline-flex;
+    align-items: center;
+    padding: 5px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text2);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .chip-toggle.active {
+    background: var(--accent-dim);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
 
   /* ── MODAL ── */
   .modal-overlay {
