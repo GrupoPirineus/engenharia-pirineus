@@ -16,7 +16,7 @@ const ABAS = [
   { chave: 'controladoria', titulo: 'Controladoria Operacional', papel: 'controladoria_op', fontes: ['pai', 'aumento'] },
   { chave: 'aprovador', titulo: 'Superintendente', papel: 'inv_aprovador', fontes: ['pai', 'aumento'] },
   { chave: 'diretor', titulo: 'Diretor da Área', papel: 'diretor', fontes: ['pai', 'aumento'] },
-  { chave: 'diretor_ceo', titulo: 'Diretor CEO', papel: 'diretor_ceo', fontes: ['aumento'] },
+  { chave: 'diretor_ceo', titulo: 'Diretor Financeiro', papel: 'diretor_ceo', fontes: ['aumento'] },
   { chave: 'contabil', titulo: 'Controladoria Contábil', papel: 'controladoria_contabil', fontes: ['encerramento'] }
 ];
 

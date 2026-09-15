@@ -1,5 +1,6 @@
 import { sb } from '../../shared/supabase.js';
 import { toast, fmtDate } from '../../shared/ui.js';
+import { temPapel } from '../../shared/acesso.js';
 import { currentUser } from './auth.js';
 import { badgeStatusPai, fmtMoeda, TIPO_INVESTIMENTO_LABELS, STATUS_PAI_LABELS } from './dashboard.js';
 import { imprimirPai } from './pdf.js';
@@ -272,6 +273,45 @@ export async function abrirDetalhePai(paiId, etapaAtual) {
         <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
       `}
     </div>`;
+}
+
+// ═══════════════════════════════════════════════════
+// DEEP LINK DE E-MAIL — botão "Abrir e aprovar" / "Abrir no sistema" dos
+// e-mails do PAI leva a ?pai=<id> (shared/casca.js lê e chama isto depois
+// de montar o mundo Investimentos). Decide se abre em modo decisão (a
+// etapa pendente deste PAI é realmente da alçada de quem clicou) ou em
+// modo consulta — mesma tela que "Meus PAIs" já abre hoje, sem os botões
+// de decisão. Acesso é sempre respeitado por baixo: se o RLS de `pais`
+// não deixar o usuário ler esse PAI, abrirDetalhePai já mostra o toast
+// "PAI não encontrado" e não abre nada.
+// ═══════════════════════════════════════════════════
+export async function abrirPaiPorDeepLink(paiId) {
+  const etapa = await etapaPendenteDoPaiParaMim(paiId);
+  await abrirDetalhePai(paiId, etapa || undefined);
+}
+
+// Mesmo critério de carregarFilaControladoria/carregarFilaPorResponsavel,
+// acima, só que checando um pai_id específico em vez de listar a fila
+// inteira — só devolve a etapa se o passo pendente for realmente da
+// alçada de quem está logado (papel global pra controladoria, alçada por
+// empresa+setor pra aprovador/diretor).
+async function etapaPendenteDoPaiParaMim(paiId) {
+  const { data: passo } = await sb.from('passos_aprovacao')
+    .select('etapa, pai:pais(empresa_id,setor_id)')
+    .eq('pai_id', paiId).eq('decisao', 'pendente')
+    .order('ordem', { ascending: false }).limit(1).maybeSingle();
+  if (!passo?.pai) return null;
+
+  if (passo.etapa === 'controladoria_op') {
+    return (await temPapel('investimentos', 'controladoria_op')) ? 'controladoria_op' : null;
+  }
+  if (passo.etapa === 'aprovador' || passo.etapa === 'diretor') {
+    const coluna = passo.etapa === 'aprovador' ? 'responsavel_id' : 'diretor_id';
+    const { data: alcada } = await sb.from('alcada_por_setor').select('id')
+      .eq(coluna, currentUser.id).eq('empresa_id', passo.pai.empresa_id).eq('setor_id', passo.pai.setor_id).maybeSingle();
+    return alcada ? passo.etapa : null;
+  }
+  return null;
 }
 
 // ═══════════════════════════════════════════════════

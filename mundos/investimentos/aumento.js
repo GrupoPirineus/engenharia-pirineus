@@ -379,6 +379,38 @@ export async function abrirDetalheAumento(aumentoId, etapaAtual) {
     </div>`;
 }
 
+// ═══════════════════════════════════════════════════
+// DEEP LINK DE E-MAIL — mesmo mecanismo de abrirPaiPorDeepLink (aprovacao.js):
+// o botão "Abrir e aprovar" dos e-mails do aumento leva a ?aumento=<id>,
+// shared/casca.js chama isto depois de montar o mundo Investimentos.
+// controladoria_op e diretor_ceo são papel global (sem alçada por
+// empresa+setor); aprovador/diretor dependem de alcada_por_setor, igual às
+// filas acima.
+// ═══════════════════════════════════════════════════
+export async function abrirAumentoPorDeepLink(aumentoId) {
+  const etapa = await etapaPendenteDoAumentoParaMim(aumentoId);
+  await abrirDetalheAumento(aumentoId, etapa || undefined);
+}
+
+async function etapaPendenteDoAumentoParaMim(aumentoId) {
+  const { data: passo } = await sb.from('passos_aumento')
+    .select('etapa, aumento:aumentos_verba(empresa_id,setor_id)')
+    .eq('aumento_id', aumentoId).eq('decisao', 'pendente')
+    .order('ordem', { ascending: false }).limit(1).maybeSingle();
+  if (!passo?.aumento) return null;
+
+  if (passo.etapa === 'controladoria_op' || passo.etapa === 'diretor_ceo') {
+    return (await temPapel('investimentos', passo.etapa)) ? passo.etapa : null;
+  }
+  if (passo.etapa === 'aprovador' || passo.etapa === 'diretor') {
+    const coluna = passo.etapa === 'aprovador' ? 'responsavel_id' : 'diretor_id';
+    const { data: alcada } = await sb.from('alcada_por_setor').select('id')
+      .eq(coluna, currentUser.id).eq('empresa_id', passo.aumento.empresa_id).eq('setor_id', passo.aumento.setor_id).maybeSingle();
+    return alcada ? passo.etapa : null;
+  }
+  return null;
+}
+
 export async function confirmarDecisaoAumento(aumentoId, etapa, decisao) {
   const observacao = document.getElementById('decisao-aumento-observacao').value.trim();
   if ((decisao === 'devolvido' || decisao === 'reprovado') && !observacao) {
@@ -422,7 +454,7 @@ async function registrarDecisaoAumento(aumentoId, etapa, decisao, observacao) {
     if (souDiretorCeo) {
       const { error } = await sb.rpc('aplicar_efeito_aumento', { p_aumento_id: aumentoId });
       if (error) { toast('Erro ao aplicar efeito do aumento: ' + error.message, 'error'); return; }
-      toast('Aumento aprovado — teto da área elevado (Diretor da área também é Diretor CEO)');
+      toast('Aumento aprovado — teto da área elevado (Diretor da área também é Diretor Financeiro)');
       if (aoAtualizar) await aoAtualizar();
       return;
     }

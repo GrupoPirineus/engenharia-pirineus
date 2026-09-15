@@ -30,7 +30,7 @@ export async function montarMundoInvestimentos(usuario) {
   if (souControladoria) papeis.push('Controladoria Operacional');
   if (souAprovador) papeis.push('Superintendente');
   if (souDiretor) papeis.push('Diretor');
-  if (souDiretorCeo) papeis.push('Diretor CEO');
+  if (souDiretorCeo) papeis.push('Diretor Financeiro');
   if (souContabil) papeis.push('Controladoria Contábil');
 
   document.getElementById('sidebar-nav').innerHTML = `

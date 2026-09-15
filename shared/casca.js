@@ -1,10 +1,12 @@
-import { setPage } from './ui.js';
+import { setPage, toast } from './ui.js';
 import { obterUsuarioLogado } from './auth.js';
 import { isMaster, temMundo } from './acesso.js';
 import { definirSessaoChamados } from '../mundos/chamados/auth.js';
 import { setupApp as montarMundoChamados } from '../mundos/chamados/nav.js';
 import { definirSessaoInvestimentos } from '../mundos/investimentos/auth.js';
 import { montarMundoInvestimentos } from '../mundos/investimentos/main.js';
+import { abrirPaiPorDeepLink } from '../mundos/investimentos/aprovacao.js';
+import { abrirAumentoPorDeepLink } from '../mundos/investimentos/aumento.js';
 import { montarAdmin } from '../admin/usuarios.js';
 
 const ICONES = { chamados: '🛠', investimentos: '📈', administracao: '⚙' };
@@ -15,11 +17,51 @@ let destinos = []; // ['chamados', 'investimentos', 'administracao']
 let mundoAtivo = null;
 
 // ═══════════════════════════════════════════════════
+// DEEP LINK DE E-MAIL (PAI/Aumento) — ?pai=<id> / ?aumento=<id> na URL.
+// Guardado em sessionStorage (não só lido da URL) porque precisa
+// sobreviver tanto a um reload de página (login e-mail/senha, ver
+// shared/auth.js doLogin) quanto a um redirect OAuth que NÃO preserva
+// query string (Google — doLoginGoogle usa redirectTo:
+// origin+pathname, sem o "?pai=..."). A URL é limpa assim que o valor é
+// capturado, pra um F5 depois não reabrir o mesmo item de novo.
+// ═══════════════════════════════════════════════════
+const DEEP_LINK_KEY = 'deepLinkPendente';
+
+function capturarDeepLinkDaUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const paiId = params.get('pai');
+  const aumentoId = params.get('aumento');
+  if (!paiId && !aumentoId) return;
+
+  sessionStorage.setItem(DEEP_LINK_KEY, JSON.stringify(
+    paiId ? { tipo: 'pai', id: paiId } : { tipo: 'aumento', id: aumentoId }
+  ));
+  const url = new URL(window.location.href);
+  url.searchParams.delete('pai');
+  url.searchParams.delete('aumento');
+  window.history.replaceState({}, '', url);
+}
+
+function lerDeepLinkPendente() {
+  try { return JSON.parse(sessionStorage.getItem(DEEP_LINK_KEY) || 'null'); }
+  catch { return null; }
+}
+
+function consumirDeepLinkPendente() {
+  const dl = lerDeepLinkPendente();
+  sessionStorage.removeItem(DEEP_LINK_KEY);
+  return dl;
+}
+
+// ═══════════════════════════════════════════════════
 // BOOT — resolve sessão, resolve atribuições, decide a entrada
 // ═══════════════════════════════════════════════════
 export async function iniciarCasca() {
+  capturarDeepLinkDaUrl();
+
   const usuario = await obterUsuarioLogado();
-  if (!usuario) { setPage('auth-screen'); return; }
+  if (!usuario) { setPage('auth-screen'); return; } // deep link fica guardado; aplicado no próximo boot, pós-login
+
   usuarioAtual = usuario;
 
   const [souMaster, acessoChamados, acessoInvestimentos] = await Promise.all([
@@ -36,6 +78,16 @@ export async function iniciarCasca() {
   if (destinos.length === 0) { setPage('pending-screen'); return; }
 
   popularUsuarioNaSidebar(usuario);
+
+  // Deep link pendente tem prioridade sobre o mundo lembrado/seletor — a
+  // pessoa clicou num e-mail sobre um item específico de Investimentos.
+  // Sem acesso a Investimentos: descarta e segue o fluxo normal, com aviso
+  // ("abrir normal com aviso", em vez de travar ou dar erro).
+  if (lerDeepLinkPendente()) {
+    if (destinos.includes('investimentos')) { entrarNoMundo('investimentos'); return; }
+    const tipo = consumirDeepLinkPendente()?.tipo;
+    toast(`Você não tem acesso a Investimentos para abrir o ${tipo === 'aumento' ? 'aumento de verba' : 'PAI'} do link.`, 'error');
+  }
 
   if (destinos.length === 1) { entrarNoMundo(destinos[0]); return; }
 
@@ -67,7 +119,7 @@ function mostrarSeletorDeMundos(usuario) {
 // ═══════════════════════════════════════════════════
 // ENTRAR NO MUNDO / ALTERNADOR (troca sem deslogar)
 // ═══════════════════════════════════════════════════
-export function entrarNoMundo(destino) {
+export async function entrarNoMundo(destino) {
   mundoAtivo = destino;
   sessionStorage.setItem('mundoAtivo', destino);
 
@@ -80,7 +132,11 @@ export function entrarNoMundo(destino) {
     case 'investimentos':
       definirSessaoInvestimentos(usuarioAtual);
       setPage('app-screen');
-      montarMundoInvestimentos(usuarioAtual);
+      await montarMundoInvestimentos(usuarioAtual);
+      // Deep link de e-mail (PAI/Aumento): abre por cima da tela que
+      // montarMundoInvestimentos já montou (Aprovações/Meus PAIs) — mesma
+      // sobreposição de modal usada quando se clica numa linha da fila.
+      await aplicarDeepLinkPendente();
       break;
     case 'administracao':
       setPage('app-screen');
@@ -88,6 +144,13 @@ export function entrarNoMundo(destino) {
       break;
   }
   atualizarSwitcher();
+}
+
+async function aplicarDeepLinkPendente() {
+  const deepLink = consumirDeepLinkPendente();
+  if (!deepLink) return;
+  if (deepLink.tipo === 'pai') await abrirPaiPorDeepLink(deepLink.id);
+  else if (deepLink.tipo === 'aumento') await abrirAumentoPorDeepLink(deepLink.id);
 }
 
 function atualizarSwitcher() {

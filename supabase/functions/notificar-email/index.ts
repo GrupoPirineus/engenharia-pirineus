@@ -236,8 +236,19 @@ function montarHtmlPAI(opts: {
   cabecalho: string
   emoji: string
   mensagem: string
+  // Deep link (opção 1): quando presente, o botão leva direto ao item —
+  // ?pai=<id> ou ?aumento=<id> — em vez do link fixo pra raiz do sistema.
+  // shared/casca.js lê esse parâmetro no boot (logado ou não) e abre a
+  // tela do item; ver App (shared/casca.js) na mesma etapa.
+  link?: { tipo: 'pai' | 'aumento'; id: string }
+  // true só nos e-mails que avisam que o item ENTROU NA FILA de alguém
+  // (mesmo critério das flags *_fila_* já existentes: pai_fila_encerramento,
+  // pai_fila_<etapa>, aum_fila_<etapa>) — aí o botão convida a decidir.
+  // Nos demais (status mudou, passo concluído, lembrete de vencimento), o
+  // e-mail é só informativo pro solicitante ou pra Contábil acompanhar.
+  paraAprovador?: boolean
 }): string {
-  const { numero, titulo, cabecalho, emoji, mensagem } = opts
+  const { numero, titulo, cabecalho, emoji, mensagem, link, paraAprovador } = opts
   const blocoNumero = numero
     ? `<p style="margin:0 0 8px;color:#475569;font-size:13px">PAI/AUM nº</p>
        <p style="margin:0 0 4px;font-size:18px;font-weight:700;color:#0f172a">${escapeHtml(numero)}</p>`
@@ -248,6 +259,8 @@ function montarHtmlPAI(opts: {
   const blocoRodapeNumero = numero
     ? `<p style="margin:20px 0 0;font-size:12px;color:#94a3b8">Localize o <strong>${escapeHtml(numero)}</strong> na sua lista após entrar.</p>`
     : ''
+  const href = link ? `${BASE_URL}/?${link.tipo}=${encodeURIComponent(link.id)}` : BASE_URL
+  const textoBotao = paraAprovador ? 'Abrir e aprovar' : 'Abrir no sistema'
   return `
   <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">
     <div style="background:#1e3a5f;color:#fff;padding:20px 24px">
@@ -258,7 +271,7 @@ function montarHtmlPAI(opts: {
       <p style="margin:0 0 20px;font-size:15px;line-height:1.5;color:#0f172a">${escapeHtml(mensagem)}</p>
       ${blocoNumero}
       ${blocoTitulo}
-      <a href="${BASE_URL}" style="display:inline-block;background:#1e3a5f;color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;font-size:14px">Abrir o sistema</a>
+      <a href="${href}" style="display:inline-block;background:#1e3a5f;color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;font-size:14px">${textoBotao}</a>
       ${blocoRodapeNumero}
     </div>
     <div style="background:#f8fafc;padding:14px 24px;font-size:11px;color:#94a3b8;text-align:center">
@@ -383,6 +396,7 @@ Deno.serve(async (req) => {
           numero: record.numero, titulo: record.titulo,
           cabecalho: 'PAI aguarda encerramento', emoji: '📥',
           mensagem: `O PAI ${record.numero} teve a conclusão indicada pelo solicitante e aguarda encerramento.`,
+          link: { tipo: 'pai', id: record.id }, paraAprovador: true,
         })
         await enviar(dest, `📥 PAI aguarda encerramento — ${record.numero}`, html)
         return ok('pai_fila_encerramento notificado')
@@ -396,6 +410,7 @@ Deno.serve(async (req) => {
         numero: record.numero, titulo: record.titulo,
         cabecalho: LABEL_PAI_STATUS[status] ?? status, emoji: EMOJI_PAI_STATUS[status] ?? '📄',
         mensagem,
+        link: { tipo: 'pai', id: record.id },
       })
       await enviar([await emailPorId(record.solicitante_id)], `${EMOJI_PAI_STATUS[status] ?? '📄'} ${LABEL_PAI_STATUS[status] ?? status} — ${record.numero}`, html)
       return ok(`pai_${status} notificado`)
@@ -428,6 +443,7 @@ Deno.serve(async (req) => {
           mensagem: ehFormalizacao
             ? `O PAI ${pai.numero} foi aprovado e aguarda formalização.`
             : `O PAI ${pai.numero} está aguardando sua aprovação.`,
+          link: { tipo: 'pai', id: record.pai_id }, paraAprovador: true,
         })
         await enviar(dest, `📥 ${cabecalho} — ${pai.numero}`, html)
       }
@@ -442,7 +458,7 @@ Deno.serve(async (req) => {
           const mensagem = etapa === 'aprovador'
             ? `A crítica da Controladoria Operacional do PAI ${pai.numero} foi concluída. Segue para o Superintendente.`
             : `A aprovação do Superintendente do PAI ${pai.numero} foi concluída. Segue para o Diretor.`
-          const html = montarHtmlPAI({ numero: pai.numero, titulo: pai.titulo, cabecalho, emoji: '✅', mensagem })
+          const html = montarHtmlPAI({ numero: pai.numero, titulo: pai.titulo, cabecalho, emoji: '✅', mensagem, link: { tipo: 'pai', id: record.pai_id } })
           await enviar([await emailPorId(pai.solicitante_id)], `✅ ${cabecalho} — ${pai.numero}`, html)
         }
       }
@@ -471,6 +487,7 @@ Deno.serve(async (req) => {
       const html = montarHtmlPAI({
         numero: aum.numero, cabecalho: 'Aumento de verba aguarda sua aprovação', emoji: '📥',
         mensagem: `O aumento de verba ${aum.numero} está aguardando sua aprovação.`,
+        link: { tipo: 'aumento', id: record.aumento_id }, paraAprovador: true,
       })
       await enviar(dest, `📥 Aumento de verba aguarda aprovação — ${aum.numero}`, html)
       return ok('passos_aumento notificado')
@@ -493,6 +510,7 @@ Deno.serve(async (req) => {
       const html = montarHtmlPAI({
         numero: record.numero, cabecalho: LABEL_AUM_STATUS[status] ?? status, emoji: EMOJI_AUM_STATUS[status] ?? '📄',
         mensagem,
+        link: { tipo: 'aumento', id: record.id },
       })
       await enviar([await emailPorId(record.solicitante_id)], `${EMOJI_AUM_STATUS[status] ?? '📄'} ${LABEL_AUM_STATUS[status] ?? status} — ${record.numero}`, html)
       return ok(`aum_${status} notificado`)
@@ -553,6 +571,7 @@ Deno.serve(async (req) => {
         mensagem: venceu
           ? `O PAI ${record.numero} venceu o prazo previsto (${record.previsao_conclusao}) e ainda não foi encerrado.`
           : `O PAI ${record.numero} tem previsão de conclusão em ${record.previsao_conclusao} e ainda não foi encerrado.`,
+        link: { tipo: 'pai', id: record.id },
       })
       await enviar(dest, `⏰ ${venceu ? 'PAI com prazo vencido' : 'PAI com prazo se aproximando'} — ${record.numero}`, html)
       return ok('aviso_vencimento_pai notificado')

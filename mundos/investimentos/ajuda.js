@@ -47,7 +47,7 @@ const SECOES = [
       <div class="ajuda-nota">O número do bem de cada item é preenchido só no encerramento, pela Controladoria Contábil — você não precisa informar na abertura.</div>
       <h4>2.2 Quando falta saldo — pedir aumento de verba</h4>
       <p>Se o valor total estourar o teto da área, aparece o botão <strong>Solicitar aumento de verba</strong>. Ele abre um pedido já preenchido com o contexto do PAI: confirme empresa/área e ano, confira o valor remanescente (calculado sozinho) e escreva a justificativa.</p>
-      <p>O aumento passa por uma alçada própria (Controladoria Operacional → Superintendente → Diretor da área → Diretor CEO). Aprovado, a verba entra no bolo e você retoma o PAI.</p>
+      <p>O aumento passa por uma alçada própria (Controladoria Operacional → Superintendente → Diretor da área → Diretor Financeiro). Aprovado, a verba entra no bolo e você retoma o PAI.</p>
       <h4>2.3 Acompanhar e concluir</h4>
       <ul>
         <li>Em <strong>Meus PAIs</strong> você vê a situação de cada pedido; a aba "Aumentos de Verba" mostra os pedidos de aumento.</li>
@@ -97,18 +97,18 @@ const SECOES = [
       <ol>
         <li>Em <strong>Aprovações</strong>, aba "Diretor da Área", abra o PAI da sua área.</li>
         <li><strong>Aprove</strong> para enviar à formalização, ou <strong>Devolva/Reprove</strong> com observação.</li>
-        <li>No aumento de verba, sua aprovação segue ao Diretor CEO — exceto quando você já é o Diretor CEO da área, caso em que a mesma aprovação encerra a alçada.</li>
+        <li>No aumento de verba, sua aprovação segue ao Diretor Financeiro — exceto quando você já é o Diretor Financeiro da área, caso em que a mesma aprovação encerra a alçada.</li>
       </ol>`
   },
   {
-    id: 'diretor_ceo', numero: 6, titulo: 'Diretor CEO', kicker: 'Perfil · Diretor CEO', papel: 'diretor_ceo',
+    id: 'diretor_ceo', numero: 6, titulo: 'Diretor Financeiro', kicker: 'Perfil · Diretor Financeiro', papel: 'diretor_ceo',
     resumo: 'Última alçada do aumento de verba. Não participa do fluxo do PAI comum.',
     corpo: `
       <ol>
-        <li>Em <strong>Aprovações</strong>, aba "Diretor CEO", abra o pedido de aumento.</li>
+        <li>Em <strong>Aprovações</strong>, aba "Diretor Financeiro", abra o pedido de aumento.</li>
         <li><strong>Aprove</strong> para elevar o teto da área (a verba entra no bolo como uma linha de aumento), ou devolva/reprove.</li>
       </ol>
-      <div class="ajuda-nota">Quando o Diretor da área e o Diretor CEO são a mesma pessoa, o sistema colapsa os dois passos: uma só aprovação cobre ambos.</div>`
+      <div class="ajuda-nota">Quando o Diretor da área e o Diretor Financeiro são a mesma pessoa, o sistema colapsa os dois passos: uma só aprovação cobre ambos.</div>`
   },
   {
     id: 'contabil', numero: 7, titulo: 'Controladoria Contábil', kicker: 'Perfil · Controladoria Contábil', papel: 'controladoria_contabil',

@@ -180,7 +180,7 @@ export async function imprimirAumento(aumentoId) {
   const assinaturas = [
     { papel: 'Superintendente', nome: passoPorEtapa.aprovador?.usuario?.nome, data: passoPorEtapa.aprovador?.decidido_em },
     { papel: 'Diretor da Área', nome: passoPorEtapa.diretor?.usuario?.nome, data: passoPorEtapa.diretor?.decidido_em },
-    { papel: colapsou ? 'Diretor CEO (acumulando o papel de Diretor da área)' : 'Diretor CEO', nome: diretorCeoPasso?.usuario?.nome, data: diretorCeoPasso?.decidido_em }
+    { papel: colapsou ? 'Diretor Financeiro (acumulando o papel de Diretor da área)' : 'Diretor Financeiro', nome: diretorCeoPasso?.usuario?.nome, data: diretorCeoPasso?.decidido_em }
   ];
 
   const corpo = `

@@ -29,7 +29,7 @@ const PAPEL_LABELS = {
   solicitante: 'Solicitante', engenheiro: 'Engenheiro', gestor: 'Gestor',
   inv_solicitante: 'Solicitante', inv_aprovador: 'Aprovador',
   controladoria_op: 'Controladoria Operacional', controladoria_contabil: 'Controladoria Contábil',
-  diretor: 'Diretor', diretor_ceo: 'Diretor CEO'
+  diretor: 'Diretor', diretor_ceo: 'Diretor Financeiro'
 };
 // 'master' fica de fora de propósito — não é atribuível por aqui (ver
 // Arquitetura do Portal - Dois Mundos.dc.html: "o master não recebe papel de
