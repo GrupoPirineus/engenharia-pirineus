@@ -10,6 +10,15 @@ import { renderUnidadesSetores } from './unidades.js';
 // ═══════════════════════════════════════════════════
 
 const MUNDO_LABELS = { chamados: 'Chamados', investimentos: 'Investimentos' };
+
+// Etapa 14: usuarios.sistema_desejado é texto livre ('chamados',
+// 'investimentos' ou 'chamados,investimentos') marcado pelo usuário no
+// cadastro — só um indicador para orientar o admin, não concede nada.
+function labelSistemaDesejado(sistemaDesejado) {
+  if (!sistemaDesejado) return null;
+  const nomes = sistemaDesejado.split(',').map(s => MUNDO_LABELS[s.trim()] || s.trim()).filter(Boolean);
+  return nomes.length ? nomes.join(' + ') : null;
+}
 const PAPEL_LABELS = {
   solicitante: 'Solicitante', engenheiro: 'Engenheiro', gestor: 'Gestor',
   inv_solicitante: 'Solicitante', inv_aprovador: 'Aprovador',
@@ -100,7 +109,7 @@ export async function renderListaUsuarios(filtro) {
               <td><strong>${u.nome}</strong></td>
               <td><span class="text-muted text-sm">${u.email}</span></td>
               <td>${u.atribuicoes.length === 0
-                ? '<span class="text-muted text-xs">sem atribuição</span>'
+                ? `<span class="text-muted text-xs">sem atribuição</span>${labelSistemaDesejado(u.sistema_desejado) ? `<br><span class="badge badge-solicitacao" style="margin-top:4px">Solicitou: ${labelSistemaDesejado(u.sistema_desejado)}</span>` : ''}`
                 : u.atribuicoes.map(a => `<span class="badge ${a.mundo === 'chamados' ? 'badge-execucao' : 'badge-atribuicao'}">${MUNDO_LABELS[a.mundo] || a.mundo} · ${a.papel === 'master' ? 'Master' : (PAPEL_LABELS[a.papel] || a.papel)}</span>`).join(' ')}</td>
               <td>${u.ativo === false ? '<span class="badge badge-danger">Bloqueado</span>' : (u.atribuicoes.length === 0 ? '<span class="badge badge-pendente">Pendente</span>' : '<span class="badge badge-success">Ativo</span>')}</td>
               <td class="text-right"><span class="text-muted text-xs">Ver ficha ›</span></td>
@@ -161,6 +170,7 @@ export async function abrirFichaUsuario(usuarioId) {
         <div class="info-row" style="margin-bottom:20px">
           <div class="info-item"><span class="info-label">Status</span><span class="info-val">${usuario.ativo === false ? '<span class="badge badge-danger">Bloqueado</span>' : '<span class="badge badge-success">Ativo</span>'}</span></div>
           <div class="info-item"><span class="info-label">Cadastro</span><span class="info-val">${fmtDate(usuario.criado_em)}</span></div>
+          ${labelSistemaDesejado(usuario.sistema_desejado) ? `<div class="info-item"><span class="info-label">Sistema desejado</span><span class="info-val"><span class="badge badge-solicitacao">Solicitou: ${labelSistemaDesejado(usuario.sistema_desejado)}</span></span></div>` : ''}
         </div>
 
         <div class="form-section-title">Atribuições · cada linha é um acesso</div>

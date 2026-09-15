@@ -67,7 +67,17 @@ export async function doRegister() {
   msg.innerHTML = '';
   if (!nome || !email || !pass) { msg.innerHTML = '<p class="error-msg">Preencha todos os campos.</p>'; return; }
   if (pass.length < 6) { msg.innerHTML = '<p class="error-msg">Senha mínima de 6 caracteres.</p>'; return; }
-  const { error } = await sb.auth.signUp({ email, password: pass, options: { data: { nome } } });
+
+  // Etapa 14: "Quais sistemas você precisa acessar?" — só um indicador
+  // para o admin (usuarios.sistema_desejado), nunca concede acesso; quem
+  // decide isso continua sendo a atribuição que o master cria depois.
+  const quer = [];
+  if (document.getElementById('reg-sistema-chamados').checked) quer.push('chamados');
+  if (document.getElementById('reg-sistema-investimentos').checked) quer.push('investimentos');
+  if (quer.length === 0) { msg.innerHTML = '<p class="error-msg">Marque ao menos um sistema que você precisa acessar.</p>'; return; }
+  const sistemaDesejado = quer.join(',');
+
+  const { error } = await sb.auth.signUp({ email, password: pass, options: { data: { nome, sistema_desejado: sistemaDesejado } } });
   if (error) { msg.innerHTML = `<p class="error-msg">${error.message}</p>`; }
   else { msg.innerHTML = '<p class="success-msg">Cadastro realizado! Verifique seu e-mail e clique no link de confirmação para acessar o sistema.</p>'; }
 }
@@ -150,11 +160,16 @@ export async function obterUsuarioLogado() {
     // grava full_name/name (claim padrão do provedor) — tenta os três
     // antes de cair no prefixo do e-mail.
     const nomeGoogle = authUser.user.user_metadata?.nome || authUser.user.user_metadata?.full_name || authUser.user.user_metadata?.name;
+    // sistema_desejado (Etapa 14): só existe para quem se cadastrou pelo
+    // formulário e-mail/senha (doRegister gravou em user_metadata); login
+    // via Google não passa por ali, então fica null — é só um indicador,
+    // nunca bloqueia nem concede nada.
     await sb.from('usuarios').upsert({
       id: authUser.user.id,
       nome: nomeGoogle || authUser.user.email.split('@')[0],
       email: authUser.user.email,
-      perfil: 'solicitante'
+      perfil: 'solicitante',
+      sistema_desejado: authUser.user.user_metadata?.sistema_desejado || null
     });
     const { data: newData } = await sb.from('usuarios').select('*').eq('id', session.user.id).single();
     if (newData) { usuarioLogado = newData; return newData; }
