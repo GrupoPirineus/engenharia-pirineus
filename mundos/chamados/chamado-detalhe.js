@@ -355,15 +355,61 @@ export function toggleCompartilharMenu(event) {
   menu.classList.toggle('hidden');
 }
 
+// Bucket 'anexos-chamados' é privado (mesmo padrão de downloadAnexo, acima)
+// — por isso o link do anexo no texto compartilhado precisa ser signed URL,
+// não existe URL pública fixa pra reaproveitar. Validade maior que a de
+// downloadAnexo (60s, pensada pra um clique imediato) porque este link fica
+// salvo numa conversa de WhatsApp/e-mail e pode ser aberto dias depois.
+const VALIDADE_LINK_ANEXO_COMPARTILHAR = 60 * 60 * 24 * 7; // ~7 dias
+const LIMITE_TEXTO_WHATSAPP = 1500;
+
+// completo=false monta a versão enxuta pro WhatsApp quando o texto passa do
+// limite: mantém a estrutura (fase/data/horas/autor no diário,
+// etapa/autor/data-hora no histórico) e derruba o texto livre de cada linha
+// (descrição do lançamento, observação do evento) — "texto redundante" que
+// o e-mail já carrega completo.
+function formatarDiarioCompartilhar(diario, completo) {
+  if (!diario?.length) return null;
+  const linhas = diario.map(d => {
+    const cabecalho = `- ${TIPO_LANCAMENTO[d.tipo] || d.tipo} · ${fmtDate(d.data_trabalho)} · ${d.horas}h · ${d.engenheiro?.nome || '—'}`;
+    if (!completo) return cabecalho;
+    const nomesAnexos = (d.anexos_diario || []).map(a => a.nome_arquivo);
+    return [cabecalho, `  ${d.descricao || '—'}`, nomesAnexos.length ? `  Anexos: ${nomesAnexos.join(', ')}` : null].filter(Boolean).join('\n');
+  });
+  return `DIÁRIO DE BORDO\n${linhas.join('\n')}`;
+}
+
+function formatarHistoricoCompartilhar(historico, completo) {
+  if (!historico?.length) return null;
+  const linhas = historico.map(h => {
+    const cabecalho = `- ${STATUS_LABELS[h.status_novo] || h.status_novo} · ${h.usuario?.nome || '—'} · ${fmtDateTime(h.criado_em)}`;
+    return completo && h.observacao ? `${cabecalho}\n  ${h.observacao}` : cabecalho;
+  });
+  return `HISTÓRICO\n${linhas.join('\n')}`;
+}
+
+function formatarAnexosCompartilhar(anexosComLink) {
+  if (!anexosComLink?.length) return null;
+  return `ANEXOS\n${anexosComLink.map(a => `- ${a.nome}: ${a.url || '(link indisponível)'}`).join('\n')}`;
+}
+
 export async function compartilharChamado(id, canal) {
   document.getElementById('compartilhar-menu')?.classList.add('hidden');
 
-  const { data: c } = await sb.from('chamados')
-    .select(`*, empresas(nome), setores(nome), tipos_servico(nome), solicitante:solicitante_id(nome)`)
-    .eq('id', id).single();
+  const [{ data: c }, { data: diario }, { data: historico }, { data: anexos }] = await Promise.all([
+    sb.from('chamados').select(`*, empresas(nome), setores(nome), tipos_servico(nome), solicitante:solicitante_id(nome)`).eq('id', id).single(),
+    sb.from('diario_bordo').select('*, anexos_diario(*), engenheiro:engenheiro_id(nome)').eq('chamado_id', id).order('data_trabalho', { ascending: true }),
+    sb.from('historico_status').select('*, usuario:usuarios(nome)').eq('chamado_id', id).order('criado_em', { ascending: true }),
+    sb.from('anexos_chamado').select('*').eq('chamado_id', id)
+  ]);
   if (!c) { toast('Chamado não encontrado', 'error'); return; }
 
-  const texto = [
+  const anexosComLink = await Promise.all((anexos || []).map(async a => {
+    const { data: signed } = await sb.storage.from('anexos-chamados').createSignedUrl(a.storage_path, VALIDADE_LINK_ANEXO_COMPARTILHAR);
+    return { nome: a.nome_arquivo, url: signed?.signedUrl || null };
+  }));
+
+  const camposPrincipais = [
     `Chamado ${c.codigo} — ${c.titulo}`,
     '',
     `Empresa: ${c.empresas?.nome || '—'}`,
@@ -371,18 +417,31 @@ export async function compartilharChamado(id, canal) {
     `Tipo: ${c.tipos_servico?.nome || '—'}`,
     `Prioridade: ${PRIORIDADE_LABELS[c.prioridade] || c.prioridade || '—'}`,
     `Solicitante: ${c.solicitante?.nome || '—'}`,
-    `Data desejada: ${fmtDate(c.data_desejada)}`,
-    '',
-    'Descrição:',
-    c.descricao || '—'
+    `Data desejada: ${fmtDate(c.data_desejada)}`
   ].join('\n');
+  const motivoRejeicao = c.motivo_rejeicao ? `MOTIVO DA REJEIÇÃO\n${c.motivo_rejeicao}` : null;
 
-  if (canal === 'whatsapp') {
-    window.open(`https://wa.me/?text=${encodeURIComponent(texto)}`, '_blank');
-  } else if (canal === 'email') {
+  const montarTexto = completo => [
+    camposPrincipais,
+    motivoRejeicao,
+    completo ? `DESCRIÇÃO\n${c.descricao || '—'}` : null,
+    formatarDiarioCompartilhar(diario, completo),
+    formatarHistoricoCompartilhar(historico, completo),
+    formatarAnexosCompartilhar(anexosComLink)
+  ].filter(Boolean).join('\n\n');
+
+  const textoCompleto = montarTexto(true);
+
+  if (canal === 'email') {
     const assunto = `${c.codigo} — ${c.titulo}`;
-    window.location.href = `mailto:?subject=${encodeURIComponent(assunto)}&body=${encodeURIComponent(texto)}`;
+    window.location.href = `mailto:?subject=${encodeURIComponent(assunto)}&body=${encodeURIComponent(textoCompleto)}`;
+    return;
   }
+
+  // WhatsApp trunca mensagens muito longas — acima do limite, manda a
+  // versão enxuta (montarTexto(false)) em vez do texto completo.
+  const textoWhatsapp = textoCompleto.length > LIMITE_TEXTO_WHATSAPP ? montarTexto(false) : textoCompleto;
+  window.open(`https://wa.me/?text=${encodeURIComponent(textoWhatsapp)}`, '_blank');
 }
 
 let chatFilesSelected = [];
