@@ -5,6 +5,11 @@ import { renderDashboard } from './dashboard.js';
 import { renderChamados, renderMeusChamados, renderMinhaFila } from './chamados.js';
 import { renderUsuarios } from './usuarios.js';
 import { renderConfiguracoes } from './configuracoes.js';
+// Import só por efeito colateral: chamado-detalhe.js nunca era importado por
+// nenhum módulo, então seu Object.assign(window,...) nunca rodava — Imprimir,
+// Lançar Horas etc. lançavam "function is not defined" ao clicar. Corrigido
+// aqui (bug pré-existente, achado ao ligar o botão Compartilhar novo).
+import './chamado-detalhe.js';
 
 export let currentPage = null;
 

@@ -332,6 +332,59 @@ export async function imprimirChamado(id) {
   setTimeout(() => win.print(), 500);
 }
 
+// ═══════════════════════════════════════════════════
+// COMPARTILHAR (WhatsApp/E-mail) — distinto do "Contato do Solicitante"
+// em chamados.js: aqueles botões falam com o solicitante; este envia a
+// solicitação inteira (texto) para quem quer que a pessoa escolha.
+// ═══════════════════════════════════════════════════
+export function toggleCompartilharMenu(event) {
+  event?.stopPropagation();
+  const menu = document.getElementById('compartilhar-menu');
+  if (!menu) return;
+  // position:fixed calculado aqui (em vez de position:absolute no CSS) porque
+  // o cabeçalho do detalhe vive dentro do .modal, que tem overflow-y:auto — um
+  // menu absoluto ficaria cortado assim que passasse da borda do modal.
+  if (menu.classList.contains('hidden')) {
+    const btn = event?.currentTarget || document.activeElement;
+    const r = btn?.getBoundingClientRect();
+    if (r) {
+      menu.style.top = `${r.bottom + 4}px`;
+      menu.style.right = `${window.innerWidth - r.right}px`;
+    }
+  }
+  menu.classList.toggle('hidden');
+}
+
+export async function compartilharChamado(id, canal) {
+  document.getElementById('compartilhar-menu')?.classList.add('hidden');
+
+  const { data: c } = await sb.from('chamados')
+    .select(`*, empresas(nome), setores(nome), tipos_servico(nome), solicitante:solicitante_id(nome)`)
+    .eq('id', id).single();
+  if (!c) { toast('Chamado não encontrado', 'error'); return; }
+
+  const texto = [
+    `Chamado ${c.codigo} — ${c.titulo}`,
+    '',
+    `Empresa: ${c.empresas?.nome || '—'}`,
+    `Setor: ${c.setores?.nome || '—'}`,
+    `Tipo: ${c.tipos_servico?.nome || '—'}`,
+    `Prioridade: ${PRIORIDADE_LABELS[c.prioridade] || c.prioridade || '—'}`,
+    `Solicitante: ${c.solicitante?.nome || '—'}`,
+    `Data desejada: ${fmtDate(c.data_desejada)}`,
+    '',
+    'Descrição:',
+    c.descricao || '—'
+  ].join('\n');
+
+  if (canal === 'whatsapp') {
+    window.open(`https://wa.me/?text=${encodeURIComponent(texto)}`, '_blank');
+  } else if (canal === 'email') {
+    const assunto = `${c.codigo} — ${c.titulo}`;
+    window.location.href = `mailto:?subject=${encodeURIComponent(assunto)}&body=${encodeURIComponent(texto)}`;
+  }
+}
+
 let chatFilesSelected = [];
 
 export function previewChatFiles(input) {
@@ -377,5 +430,6 @@ export async function enviarComentario(chamadoId) {
 // pois módulos ES não expõem suas funções no escopo global automaticamente.
 Object.assign(window, {
   openLancamento, confirmarLancamento, editarLancamento, removerAnexoDiario,
-  confirmarEdicaoLancamento, imprimirChamado, previewChatFiles, enviarComentario
+  confirmarEdicaoLancamento, imprimirChamado, previewChatFiles, enviarComentario,
+  toggleCompartilharMenu, compartilharChamado
 });

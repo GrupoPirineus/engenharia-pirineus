@@ -6,14 +6,29 @@ import { currentPage, navigateTo, updateBadges } from './nav.js';
 // ═══════════════════════════════════════════════════
 // CHAMADOS (GESTOR)
 // ═══════════════════════════════════════════════════
-export async function renderChamados(filtroStatus='') {
+// Chips da lista: agrupam os 8 status reais (STATUS_LABELS) nos 5 estágios
+// que fazem sentido para o gestor filtrar — "Em aberto" cobre tudo antes de
+// entrar em execução, "Em execução" inclui correção (o chamado volta pro
+// engenheiro, mas continua sendo trabalhado). Cada chip usa só status que a
+// lista já conhece — nenhum status novo é criado.
+const CHAMADOS_CHIPS = [
+  { key: 'todos', label: 'Todos', status: null },
+  { key: 'aberto', label: 'Em aberto', status: ['solicitacao', 'aprovacao', 'atribuicao'] },
+  { key: 'execucao', label: 'Em execução', status: ['execucao', 'correcao'] },
+  { key: 'revisao', label: 'Em revisão', status: ['revisao'] },
+  { key: 'concluido', label: 'Concluído', status: ['concluido'] },
+  { key: 'rejeitado', label: 'Rejeitado', status: ['rejeitado'] }
+];
+
+export async function renderChamados(chipAtivo='todos') {
   document.getElementById('topbar-title').textContent = 'Chamados';
   document.getElementById('topbar-actions').innerHTML = '';
   const page = document.getElementById('page-content');
   page.innerHTML = '<div class="loading"><div class="spinner"></div> Carregando...</div>';
 
+  const chip = CHAMADOS_CHIPS.find(c => c.key === chipAtivo) || CHAMADOS_CHIPS[0];
   let query = sb.from('chamados').select(`*, empresas(nome), setores(nome), tipos_servico(nome), solicitante:solicitante_id(nome), engenheiro:engenheiro_id(nome)`).order('criado_em', {ascending:false});
-  if (filtroStatus) query = query.eq('status', filtroStatus);
+  if (chip.status) query = query.in('status', chip.status);
 
   const { data: chamados } = await query;
 
@@ -22,10 +37,7 @@ export async function renderChamados(filtroStatus='') {
       <div class="table-header">
         <div class="table-title">Todos os Chamados</div>
         <div class="filters">
-          <select class="filter-select" onchange="renderChamados(this.value)">
-            <option value="">Todos os status</option>
-            ${Object.entries(STATUS_LABELS).map(([k,v]) => `<option value="${k}" ${filtroStatus===k?'selected':''}>${v}</option>`).join('')}
-          </select>
+          ${CHAMADOS_CHIPS.map(ch => `<button class="btn btn-sm ${chip.key === ch.key ? 'btn-primary' : 'btn-secondary'}" onclick="renderChamados('${ch.key}')">${ch.label}</button>`).join('')}
         </div>
       </div>
       ${(chamados||[]).length === 0 ? `<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">Nenhum chamado encontrado</div></div>` : `
@@ -228,6 +240,22 @@ export async function openChamado(id) {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
           Imprimir
         </button>
+        <div style="position:relative">
+          <button class="btn btn-secondary btn-sm" onclick="toggleCompartilharMenu(event)" title="Compartilhar solicitação completa">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+            Compartilhar
+          </button>
+          <div id="compartilhar-menu" class="hidden" style="position:fixed;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);z-index:200;overflow:hidden;min-width:170px">
+            <button class="mundo-switch-item" onclick="compartilharChamado('${id}','whatsapp')">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="color:#25d366"><path d="M17.5 14.4c-.3-.1-1.7-.8-1.9-.9-.3-.1-.5-.1-.6.1-.2.3-.7.9-.8 1-.2.2-.3.2-.6.1-.3-.1-1.2-.5-2.3-1.4-.9-.8-1.4-1.7-1.6-2-.2-.3 0-.5.1-.6l.4-.5c.1-.2.2-.3.3-.5.1-.2 0-.4 0-.5 0-.1-.6-1.5-.8-2-.2-.5-.4-.4-.6-.4h-.5c-.2 0-.5.1-.7.3-.3.3-1 .9-1 2.3s1 2.7 1.1 2.9c.1.2 2 3.1 4.9 4.3.7.3 1.2.5 1.6.6.7.2 1.3.2 1.8.1.5-.1 1.7-.7 1.9-1.4.2-.7.2-1.2.2-1.4-.1-.1-.3-.2-.6-.3z"/><path d="M12 2C6.5 2 2 6.5 2 12c0 1.8.5 3.5 1.3 5L2 22l5.1-1.3c1.4.8 3.1 1.2 4.8 1.2 5.5 0 10-4.5 10-10S17.5 2 12 2zm0 18c-1.5 0-3-.4-4.3-1.2l-.3-.2-3 .8.8-2.9-.2-.3C4.4 15 4 13.5 4 12c0-4.4 3.6-8 8-8s8 3.6 8 8-3.6 8-8 8z"/></svg>
+              WhatsApp
+            </button>
+            <button class="mundo-switch-item" onclick="compartilharChamado('${id}','email')">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+              E-mail
+            </button>
+          </div>
+        </div>
         <button class="close-btn" onclick="this.closest('.modal-overlay').remove()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
