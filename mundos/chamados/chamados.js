@@ -724,7 +724,7 @@ export async function definirPrioridade(id) {
 export async function openNovoChamado() {
   const [{ data: empresas }, { data: tipos }] = await Promise.all([
     sb.from('empresas').select('id,nome').eq('ativo',true).order('nome'),
-    sb.from('tipos_servico').select('id,nome').eq('ativo',true).order('nome')
+    sb.from('tipos_servico').select('id,nome').eq('ativo',true).order('ordem')
   ]);
 
   const overlay = document.createElement('div');

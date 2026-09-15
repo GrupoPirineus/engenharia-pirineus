@@ -8,7 +8,7 @@ import { toast } from '../shared/ui.js';
 // área de cada linha empresa_setores é feito na aba "Vínculo Setor → Área".
 // ═══════════════════════════════════════════════════
 
-let abaAtual = 'unidades'; // 'unidades' | 'setores' | 'setores-unidade' | 'tipos-investimento'
+let abaAtual = 'unidades'; // 'unidades' | 'setores' | 'setores-unidade' | 'tipos-investimento' | 'tipos-servico'
 
 export async function renderUnidadesSetores(aba) {
   if (aba) abaAtual = aba;
@@ -20,13 +20,15 @@ export async function renderUnidadesSetores(aba) {
       <button class="btn btn-sm ${abaAtual === 'setores' ? 'btn-primary' : 'btn-secondary'}" onclick="renderUnidadesSetores('setores')">Setores</button>
       <button class="btn btn-sm ${abaAtual === 'setores-unidade' ? 'btn-primary' : 'btn-secondary'}" onclick="renderUnidadesSetores('setores-unidade')">Setores por unidade</button>
       <button class="btn btn-sm ${abaAtual === 'tipos-investimento' ? 'btn-primary' : 'btn-secondary'}" onclick="renderUnidadesSetores('tipos-investimento')">Tipos de Investimento</button>
+      <button class="btn btn-sm ${abaAtual === 'tipos-servico' ? 'btn-primary' : 'btn-secondary'}" onclick="renderUnidadesSetores('tipos-servico')">Tipos de Serviço</button>
     </div>
     <div id="unidades-conteudo"><div class="loading"><div class="spinner"></div> Carregando...</div></div>`;
 
   if (abaAtual === 'unidades') await montarAbaUnidades();
   else if (abaAtual === 'setores') await montarAbaSetoresGlobais();
   else if (abaAtual === 'setores-unidade') await montarAbaSetoresPorUnidade();
-  else await montarAbaTiposInvestimento();
+  else if (abaAtual === 'tipos-investimento') await montarAbaTiposInvestimento();
+  else await montarAbaTiposServico();
 }
 
 // ═══════════════════════════════════════════════════
@@ -396,6 +398,85 @@ export async function alternarAtivoTipoInvestimento(id, ativoAtual) {
   montarAbaTiposInvestimento();
 }
 
+// ═══════════════════════════════════════════════════
+// ABA · TIPOS DE SERVIÇO (cadastro global, usado no select da Abertura de
+// Chamado — mundo Chamados). Mesmo CRUD de Tipos de Investimento, acima —
+// centralizado aqui desde a Etapa 18 (antes vivia em Configurações, dentro
+// do mundo Chamados).
+// ═══════════════════════════════════════════════════
+async function montarAbaTiposServico() {
+  const conteudo = document.getElementById('unidades-conteudo');
+  const { data: tipos, error } = await sb.from('tipos_servico').select('*').order('ordem');
+  if (error) { toast('Erro ao carregar tipos de serviço: ' + error.message, 'error'); return; }
+
+  conteudo.innerHTML = `
+    <div class="table-card">
+      <div class="table-header">
+        <div class="table-title">Tipos de Serviço · ${(tipos || []).length}</div>
+        <button class="btn btn-primary btn-sm" onclick="abrirFormTipoServico()">+ Novo tipo</button>
+      </div>
+      <div style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Ordem</th><th>Nome</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+          ${(tipos || []).map(t => `
+            <tr onclick="abrirFormTipoServico('${t.id}')">
+              <td class="text-muted">${t.ordem ?? 0}</td>
+              <td>${t.nome}</td>
+              <td>${t.ativo ? '<span class="badge badge-success">Ativo</span>' : '<span class="badge badge-danger">Inativo</span>'}</td>
+              <td class="text-right"><a href="#" onclick="event.stopPropagation();alternarAtivoTipoServico('${t.id}',${t.ativo});return false;" style="color:var(--accent);font-size:12px">${t.ativo ? 'Desativar' : 'Ativar'}</a></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+      </div>
+    </div>`;
+}
+
+export async function abrirFormTipoServico(id) {
+  const existente = id ? await sb.from('tipos_servico').select('*').eq('id', id).single().then(r => r.data) : null;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'modal-tipo-servico';
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:420px">
+      <div class="modal-header">
+        <h2>${id ? 'Editar tipo de serviço' : 'Novo tipo de serviço'}</h2>
+        <button class="close-btn" onclick="document.getElementById('modal-tipo-servico').remove()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+      <div class="modal-body">
+        <div class="field"><label>Nome *</label><input type="text" id="tipo-servico-nome" value="${existente?.nome || ''}" placeholder="ex.: Elétrica"></div>
+        <div class="field"><label>Ordem</label><input type="number" id="tipo-servico-ordem" value="${existente?.ordem ?? 0}"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="document.getElementById('modal-tipo-servico').remove()">Cancelar</button>
+        <button class="btn btn-primary" onclick="salvarTipoServico(${id ? `'${id}'` : 'null'})">Salvar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  setTimeout(() => document.getElementById('tipo-servico-nome')?.focus(), 100);
+}
+
+export async function salvarTipoServico(id) {
+  const nome = document.getElementById('tipo-servico-nome').value.trim();
+  if (!nome) { toast('Nome é obrigatório', 'error'); return; }
+  const payload = { nome, ordem: parseInt(document.getElementById('tipo-servico-ordem').value, 10) || 0 };
+  const { error } = id
+    ? await sb.from('tipos_servico').update(payload).eq('id', id)
+    : await sb.from('tipos_servico').insert(payload);
+  if (error) { toast('Erro ao salvar tipo de serviço: ' + error.message, 'error'); return; }
+  document.getElementById('modal-tipo-servico')?.remove();
+  toast('Tipo de serviço salvo');
+  montarAbaTiposServico();
+}
+
+export async function alternarAtivoTipoServico(id, ativoAtual) {
+  const { error } = await sb.from('tipos_servico').update({ ativo: !ativoAtual }).eq('id', id);
+  if (error) { toast('Erro: ' + error.message, 'error'); return; }
+  toast(ativoAtual ? 'Tipo desativado' : 'Tipo ativado');
+  montarAbaTiposServico();
+}
+
 // Funções chamadas via atributos inline (onclick/onchange) precisam estar em window,
 // pois módulos ES não expõem suas funções no escopo global automaticamente.
 Object.assign(window, {
@@ -403,5 +484,6 @@ Object.assign(window, {
   abrirFormSetorGlobal, salvarSetorGlobal, alternarAtivoSetorGlobal,
   selecionarEmpresaSetores, clicouSetorNaUnidade,
   marcarTodosSetoresDaUnidade, desmarcarTodosSetoresDaUnidade,
-  abrirFormTipoInvestimento, salvarTipoInvestimento, alternarAtivoTipoInvestimento
+  abrirFormTipoInvestimento, salvarTipoInvestimento, alternarAtivoTipoInvestimento,
+  abrirFormTipoServico, salvarTipoServico, alternarAtivoTipoServico
 });

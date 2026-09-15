@@ -3,8 +3,6 @@ import { setPage, PERFIL_LABELS, closeSidebar } from '../../shared/ui.js';
 import { isGestor, isMaster, isEngenheiro } from './auth.js';
 import { renderDashboard } from './dashboard.js';
 import { renderChamados, renderMeusChamados, renderMinhaFila } from './chamados.js';
-import { renderUsuarios } from './usuarios.js';
-import { renderConfiguracoes } from './configuracoes.js';
 // Import só por efeito colateral: chamado-detalhe.js nunca era importado por
 // nenhum módulo, então seu Object.assign(window,...) nunca rodava — Imprimir,
 // Lançar Horas etc. lançavam "function is not defined" ao clicar. Corrigido
@@ -67,30 +65,11 @@ export function buildNav() {
   }
   html += `</div>`;
 
-  // Gestão — usuários (só gestores)
-  if (isGestor()) {
-    html += `
-    <div class="nav-section">
-      <div class="nav-label">Gestão</div>
-      <button class="nav-item" onclick="navigateTo('usuarios')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
-        Usuários
-        <span class="nav-badge hidden" id="badge-pendentes">0</span>
-      </button>
-    </div>`;
-  }
-
-  // Sistema — configurações (só master)
-  if (isMaster()) {
-    html += `
-    <div class="nav-section">
-      <div class="nav-label">Sistema</div>
-      <button class="nav-item" onclick="navigateTo('configuracoes')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M12 2v2M12 20v2M20 12h2M2 12h2M17.66 17.66l-1.41-1.41M6.34 17.66l1.41-1.41"/></svg>
-        Configurações
-      </button>
-    </div>`;
-  }
+  // Etapa 18: "Gestão → Usuários" e "Sistema → Configurações" (empresas,
+  // setores, tipos de serviço) saíram daqui — gestão de usuários e de
+  // cadastros globais agora é só em Administração (admin/usuarios.js e
+  // admin/unidades.js). usuarios.perfil continua no banco (RLS/get_perfil
+  // ainda dependem dela), só as telas legadas do mundo Chamados saíram.
 
   nav.innerHTML = html;
   updateBadges();
@@ -99,11 +78,8 @@ export function buildNav() {
 export async function updateBadges() {
   if (isGestor()) {
     const { count: ap } = await sb.from('chamados').select('*', {count:'exact',head:true}).eq('status','aprovacao');
-    const { count: pe } = await sb.from('usuarios').select('*', {count:'exact',head:true}).eq('perfil','pendente');
     const badgeAp = document.getElementById('badge-aprovacao');
-    const badgePe = document.getElementById('badge-pendentes');
     if (badgeAp) { badgeAp.textContent = ap||0; ap>0 ? badgeAp.classList.remove('hidden') : badgeAp.classList.add('hidden'); }
-    if (badgePe) { badgePe.textContent = pe||0; pe>0 ? badgePe.classList.remove('hidden') : badgePe.classList.add('hidden'); }
   }
 }
 
@@ -121,8 +97,10 @@ export function navigateTo(page) {
     case 'chamados': renderChamados(); break;
     case 'meus-chamados': renderMeusChamados(); break;
     case 'minha-fila': renderMinhaFila(); break;
-    case 'usuarios': renderUsuarios(); break;
-    case 'configuracoes': renderConfiguracoes(); break;
+    // 'usuarios' e 'configuracoes' (telas removidas na Etapa 18): uma sessão
+    // que tinha uma dessas salva em sessionStorage cai aqui — manda pro
+    // dashboard em vez de deixar a tela em branco.
+    default: renderDashboard();
   }
 }
 
