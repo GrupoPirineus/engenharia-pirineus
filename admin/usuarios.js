@@ -14,9 +14,15 @@ const MUNDO_LABELS = { chamados: 'Chamados', investimentos: 'Investimentos' };
 // Etapa 14: usuarios.sistema_desejado é texto livre ('chamados',
 // 'investimentos' ou 'chamados,investimentos') marcado pelo usuário no
 // cadastro — só um indicador para orientar o admin, não concede nada.
+// Rótulos amigáveis iguais aos do register-form (index.html); valor
+// gravado no banco continua 'chamados'/'investimentos' — só o texto
+// exibido muda. Mapa separado do MUNDO_LABELS de propósito: aquele
+// rotula atribuições reais (ex. "Chamados · Solicitante") e não deve
+// mudar por causa disto.
+const SISTEMA_DESEJADO_LABELS = { chamados: 'Chamados para Projetos de Engenharia', investimentos: 'Abertura de PAI - Investimentos' };
 function labelSistemaDesejado(sistemaDesejado) {
   if (!sistemaDesejado) return null;
-  const nomes = sistemaDesejado.split(',').map(s => MUNDO_LABELS[s.trim()] || s.trim()).filter(Boolean);
+  const nomes = sistemaDesejado.split(',').map(s => SISTEMA_DESEJADO_LABELS[s.trim()] || s.trim()).filter(Boolean);
   return nomes.length ? nomes.join(' + ') : null;
 }
 const PAPEL_LABELS = {
