@@ -5,6 +5,7 @@ import { currentUser } from './auth.js';
 import { badgeStatusPai, fmtMoeda } from './dashboard.js';
 import { resolverEscoposSolicitante } from './solicitacao.js';
 import { imprimirAumento } from './pdf.js';
+import { anoVigente, renderOpcoesAno, dicaAno } from './ano.js';
 
 // ═══════════════════════════════════════════════════
 // FLUXO DE AUMENTO DE VERBA (Etapa 7)
@@ -61,7 +62,7 @@ export async function abrirModalSolicitarAumento(prefill) {
     const idx = escopos.findIndex(e => e.empresaId === prefill.empresaId && e.setorId === prefill.setorId);
     if (idx >= 0) escopoIdx = idx;
   }
-  const anoAtual = new Date().getFullYear();
+  const anoAtual = anoVigente();
   const ano = prefill?.ano || anoAtual;
   const esc = escopos[escopoIdx];
 
@@ -79,11 +80,11 @@ export async function abrirModalSolicitarAumento(prefill) {
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.id = 'modal-solicitar-aumento';
-  overlay.innerHTML = renderModalSolicitarAumento(anoAtual);
+  overlay.innerHTML = renderModalSolicitarAumento();
   document.body.appendChild(overlay);
 }
 
-function renderModalSolicitarAumento(anoAtual) {
+function renderModalSolicitarAumento() {
   const esc = estadoForm.escopos[estadoForm.escopoIdx];
   const aumentoNecessario = Math.max(0, estadoForm.valorInvestimento - estadoForm.remanescente);
   return `
@@ -107,9 +108,9 @@ function renderModalSolicitarAumento(anoAtual) {
         </div>`}
         <div class="field"><label>Ano-calendário</label>
           <select id="aumento-ano" onchange="onAumentoAnoChange(this.value)">
-            <option value="${anoAtual}" ${estadoForm.ano === anoAtual ? 'selected' : ''}>${anoAtual} · vigente</option>
-            <option value="${anoAtual + 1}" ${estadoForm.ano === anoAtual + 1 ? 'selected' : ''}>${anoAtual + 1} · disponível (entressafra)</option>
+            ${renderOpcoesAno(estadoForm.ano)}
           </select>
+          <div class="text-xs text-muted" style="margin-top:4px">${dicaAno(estadoForm.ano)}</div>
         </div>
 
         <div class="form-row">
@@ -167,7 +168,7 @@ function atualizarPreviaAumento() {
 }
 function atualizarModalAumento() {
   const overlay = document.getElementById('modal-solicitar-aumento');
-  if (overlay) overlay.querySelector('.modal').innerHTML = renderModalSolicitarAumento(new Date().getFullYear());
+  if (overlay) overlay.querySelector('.modal').innerHTML = renderModalSolicitarAumento();
 }
 
 async function onEnviarAumento() {

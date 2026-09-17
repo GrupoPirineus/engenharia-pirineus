@@ -2,6 +2,7 @@ import { sb } from '../../shared/supabase.js';
 import { toast, fmtDateTime } from '../../shared/ui.js';
 import { currentUser } from './auth.js';
 import { fmtMoeda, badgeStatusPai } from './dashboard.js';
+import { anoVigente, renderOpcoesAno, dicaAno } from './ano.js';
 
 // ═══════════════════════════════════════════════════
 // CARGA DO PLANO DE INVESTIMENTO (Etapa 6 — papel controladoria_op)
@@ -29,7 +30,6 @@ const STATUS_BADGE = { rascunho: 'badge-rascunho', aprovado: 'badge-success', en
 
 let estado = null;
 
-function anoVigente() { return new Date().getFullYear(); }
 function numOrZero(v) { const n = parseFloat(v); return isNaN(n) ? 0 : n; }
 
 export async function renderPlanoInvestimento() {
@@ -191,7 +191,6 @@ function abrirModalConfirmacao({ titulo, mensagem, textoBotao = 'Confirmar', var
 // RENDER
 // ═══════════════════════════════════════════════════
 function render() {
-  const anoAtual = anoVigente();
   const publicado = estado.status === 'aprovado';
   const encerrado = estado.status === 'encerrado';
   const ativas = estado.linhas.filter(l => !l.cancelada);
@@ -216,9 +215,9 @@ function render() {
         </div>
         <div class="field"><label>Ano-calendário</label>
           <select id="plano-ano" onchange="onAnoPlanoChange(this.value)">
-            <option value="${anoAtual}" ${estado.ano === anoAtual ? 'selected' : ''}>${anoAtual} · vigente</option>
-            <option value="${anoAtual + 1}" ${estado.ano === anoAtual + 1 ? 'selected' : ''}>${anoAtual + 1} · disponível (entressafra)</option>
+            ${renderOpcoesAno(estado.ano)}
           </select>
+          <div class="text-xs text-muted" style="margin-top:4px">${dicaAno(estado.ano)}</div>
         </div>
       </div>
     </div>

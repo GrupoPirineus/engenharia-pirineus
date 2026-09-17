@@ -5,6 +5,7 @@ import { currentUser } from './auth.js';
 import { renderMeusPais, fmtMoeda } from './dashboard.js';
 import { iniciarEtapaControladoria } from './aprovacao.js';
 import { abrirModalSolicitarAumento } from './aumento.js';
+import { anoVigente, renderOpcoesAno, dicaAno } from './ano.js';
 
 // Bucket reaproveitado do mundo Chamados (mesmo Supabase Storage do projeto),
 // com prefixo próprio para não colidir com os anexos de chamado.
@@ -13,7 +14,6 @@ const LABELS_ANEXO = { a3: 'A3 do projeto *', viabilidade: 'Estudo de viabilidad
 
 let estado = null; // construído a cada abertura da tela — ver abrirNovoPai()
 
-function anoVigente() { return new Date().getFullYear(); }
 function numOrZero(v) { const n = parseFloat(v); return isNaN(n) ? 0 : n; }
 
 // ═══════════════════════════════════════════════════
@@ -222,7 +222,6 @@ function calcular() {
 function render() {
   const esc = estado.escopos[estado.escopoIdx];
   const c = calcular();
-  const anoAtual = anoVigente();
 
   document.getElementById('page-content').innerHTML = `
     <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:8px">
@@ -253,9 +252,9 @@ function render() {
           <div class="form-row">
             <div class="field"><label>Ano-calendário do plano</label>
               <select id="pai-ano" onchange="onAnoChange(this.value)">
-                <option value="${anoAtual}" ${estado.ano === anoAtual ? 'selected' : ''}>${anoAtual} · vigente</option>
-                <option value="${anoAtual + 1}" ${estado.ano === anoAtual + 1 ? 'selected' : ''}>${anoAtual + 1} · disponível (entressafra)</option>
+                ${renderOpcoesAno(estado.ano)}
               </select>
+              <div class="text-xs text-muted" style="margin-top:4px">${dicaAno(estado.ano)}</div>
             </div>
             <div class="field"><label>Tipo de investimento</label>
               <select id="pai-tipo" onchange="onTipoChange(this.value)">
