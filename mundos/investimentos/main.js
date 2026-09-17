@@ -2,7 +2,7 @@
 // Solicitação (inv_solicitante), o motor de aprovação do PAI e do Aumento
 // de Verba (Etapa 4 e 7) — Etapa 7b consolidou as ~10 filas soltas em uma
 // única tela "Aprovações" com abas por papel (ver aprovacoes.js).
-import { temPapel } from '../../shared/acesso.js';
+import { temPapel, isMaster, carregarAtribuicoes } from '../../shared/acesso.js';
 import { renderMeusPais } from './dashboard.js';
 import { renderAprovacoes } from './aprovacoes.js';
 import { renderPlanoInvestimento } from './plano.js';
@@ -10,28 +10,44 @@ import { renderPainel } from './painel.js';
 import { renderRelatorios } from './relatorios.js';
 import { renderAjuda } from './ajuda.js';
 
+// Rótulo do rodapé da sidebar (ver rotuloPapeis) — só os papéis de
+// investimentos que existem como atribuição real na tabela `atribuicoes`.
+const PAPEL_LABELS = {
+  inv_solicitante: 'Solicitante', controladoria_op: 'Controladoria Operacional',
+  inv_aprovador: 'Superintendente', diretor: 'Diretor',
+  diretor_ceo: 'Diretor Financeiro', controladoria_contabil: 'Controladoria Contábil'
+};
+
+// O master passa em temPapel() para TODO papel (é assim que ele enxerga
+// toda a navegação do mundo, de propósito) — por isso o rótulo não pode
+// vir dessas flags, ou lista papéis que ele nunca recebeu de fato. O
+// rótulo usa as atribuições reais (tabela `atribuicoes`); master não tem
+// papel de mundo nenhum (só administra — ver admin/usuarios.js), então
+// aparece com um rótulo fixo em vez de uma lista vazia.
+function rotuloPapeis(souMaster, atribuicoes) {
+  if (souMaster) return 'Administrador';
+  const papeis = [...new Set(
+    atribuicoes.filter(a => a.mundo === 'investimentos').map(a => PAPEL_LABELS[a.papel] || a.papel)
+  )];
+  return papeis.join(' · ');
+}
+
 export async function montarMundoInvestimentos(usuario) {
   document.getElementById('topbar-title').textContent = 'Investimentos';
   document.getElementById('topbar-actions').innerHTML = '';
 
-  const [souSolicitante, souControladoria, souAprovador, souDiretor, souDiretorCeo, souContabil] = await Promise.all([
+  const [souSolicitante, souControladoria, souAprovador, souDiretor, souDiretorCeo, souContabil, souMaster, atribuicoes] = await Promise.all([
     temPapel('investimentos', 'inv_solicitante'),
     temPapel('investimentos', 'controladoria_op'),
     temPapel('investimentos', 'inv_aprovador'),
     temPapel('investimentos', 'diretor'),
     temPapel('investimentos', 'diretor_ceo'),
-    temPapel('investimentos', 'controladoria_contabil')
+    temPapel('investimentos', 'controladoria_contabil'),
+    isMaster(),
+    carregarAtribuicoes(usuario.id)
   ]);
   const souAprovadorDeAlgumaEtapa = souControladoria || souAprovador || souDiretor || souDiretorCeo || souContabil;
   const temAlgumPapel = souSolicitante || souAprovadorDeAlgumaEtapa;
-
-  const papeis = [];
-  if (souSolicitante) papeis.push('Solicitante');
-  if (souControladoria) papeis.push('Controladoria Operacional');
-  if (souAprovador) papeis.push('Superintendente');
-  if (souDiretor) papeis.push('Diretor');
-  if (souDiretorCeo) papeis.push('Diretor Financeiro');
-  if (souContabil) papeis.push('Controladoria Contábil');
 
   document.getElementById('sidebar-nav').innerHTML = `
     <div class="nav-section">
@@ -67,7 +83,7 @@ export async function montarMundoInvestimentos(usuario) {
         Ajuda
       </button>` : ''}
     </div>`;
-  document.getElementById('user-role-display').textContent = papeis.join(' · ');
+  document.getElementById('user-role-display').textContent = rotuloPapeis(souMaster, atribuicoes);
 
   // Primeira tela: prioriza a fila de aprovação sobre o dashboard do
   // solicitante quando a pessoa acumula os dois papéis — é o trabalho
