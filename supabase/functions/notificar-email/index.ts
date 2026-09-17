@@ -25,6 +25,21 @@
 //   - CRON "aviso_vencimento_pai" (chamado pela função de banco
 //     verificar_vencimento_pai, não por trigger de tabela) -> Controladoria
 //     Contábil, quando previsao_conclusao se aproxima/vence
+//
+// Etapa 19 (mundo Investimentos) acrescenta, no mesmo arquivo/função:
+//   - INSERT em pais (status nasce em_critica) OU UPDATE rascunho->em_critica
+//     -> confirmação de criação ao solicitante ("está com a Controladoria
+//     Operacional para revisão"). Reenvio após devolvido não dispara este
+//     e-mail (não é criação) nem duplica o aviso de fila que a Controladoria
+//     já recebe (INSERT em passos_aprovacao, inalterado).
+//   - CRON "lembrete_aprovacao_pai" / "lembrete_aprovacao_aumento" (chamados
+//     por verificar_aprovacoes_pendentes, X=2 dias sem decisão no passo
+//     pendente) -> titular da fila daquela etapa, com o botão "Abrir e
+//     aprovar" de sempre.
+//   - CRON "escalonamento_aprovacao_pai" / "escalonamento_aprovacao_aumento"
+//     (mesma função, Y=4 dias sem decisão) -> master(es), avisando em qual
+//     etapa o item está parado. A cadência (no máx. 1 lembrete/escalonamento
+//     a cada 2 dias por passo) é resolvida no SQL, não aqui.
 
 import nodemailer from 'npm:nodemailer@6.9.10'
 import { createClient } from 'npm:@supabase/supabase-js@2'
@@ -307,6 +322,47 @@ async function emailsAlcada(coluna: 'responsavel_id' | 'diretor_id', empresaId: 
   return emails.filter((e): e is string => !!e)
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// ETAPA 19 · LEMBRETES/ESCALONAMENTO POR INATIVIDADE — helpers próprios
+// ═══════════════════════════════════════════════════════════════════════
+
+// Rótulo da etapa para a mensagem de escalonamento ao master ("parado há
+// N dias, aguardando <etapa>"). diretor_ceo só existe em Aumento.
+const ETAPA_LABELS_PAI: Record<string, string> = {
+  controladoria_op: 'Controladoria Operacional', aprovador: 'Superintendente da Área', diretor: 'Diretor',
+}
+const ETAPA_LABELS_AUM: Record<string, string> = {
+  controladoria_op: 'Controladoria Operacional', aprovador: 'Superintendente da Área', diretor: 'Diretor', diretor_ceo: 'Diretor Financeiro',
+}
+
+// Mesma resolução de titular de fila usada nos blocos de INSERT em
+// passos_aprovacao/passos_aumento (Etapa 9) — reaproveitada aqui para os
+// e-mails de lembrete, sem tocar naqueles blocos.
+async function emailsTitularEtapa(etapa: string, empresaId: string, setorId: string): Promise<string[]> {
+  if (etapa === 'controladoria_op') return await emailsPorPapelGlobal('controladoria_op')
+  if (etapa === 'diretor_ceo') return await emailsPorPapelGlobal('diretor_ceo')
+  if (etapa === 'aprovador') return await emailsAlcada('responsavel_id', empresaId, setorId)
+  if (etapa === 'diretor') return await emailsAlcada('diretor_id', empresaId, setorId)
+  return []
+}
+
+// Confirmação de criação ao solicitante — dispara na criação direta
+// (INSERT com status já em_critica) ou no primeiro envio de um rascunho
+// (UPDATE rascunho->em_critica). Reenvio após devolvido (old_record.status
+// === 'devolvido') não passa por aqui — não é criação, e o solicitante já
+// tem o histórico do ciclo anterior.
+async function notificarPaiCriado(record: any) {
+  if (!(await flagAtivo('pai_criado'))) return ok('pai_criado: flag desativada')
+  const html = montarHtmlPAI({
+    numero: record.numero, titulo: record.titulo,
+    cabecalho: 'PAI criado com sucesso', emoji: '📝',
+    mensagem: `Seu PAI ${record.numero} foi criado e está em análise pela Controladoria Operacional.`,
+    link: { tipo: 'pai', id: record.id },
+  })
+  await enviar([await emailPorId(record.solicitante_id)], `📝 PAI criado — ${record.numero}`, html)
+  return ok('pai_criado notificado')
+}
+
 // --- Handler ----------------------------------------------------------------
 
 Deno.serve(async (req) => {
@@ -381,10 +437,21 @@ Deno.serve(async (req) => {
     // concluido_solicitante/encerrado).
     // ═══════════════════════════════════════════════════════════════
     if (table === 'pais') {
-      if (type !== 'UPDATE') return ok('pais: evento ignorado (insert)')
+      // Etapa 19: criação direta (rascunho nunca existiu — insert já nasce
+      // em_critica). Reenvio (status parte de 'devolvido') é UPDATE, tratado
+      // abaixo, e não passa por aqui.
+      if (type === 'INSERT') {
+        if (record.status === 'em_critica') return await notificarPaiCriado(record)
+        return ok('pais: insert sem notificação')
+      }
       if (!old_record || old_record.status === record.status) return ok('pais: status inalterado')
 
       const status = record.status as string
+
+      // Etapa 19: primeiro envio de um rascunho salvo antes (mesma
+      // confirmação da criação direta acima). Reenvio pós-devolução
+      // (old_record.status === 'devolvido') não cai aqui de propósito.
+      if (status === 'em_critica' && old_record.status === 'rascunho') return await notificarPaiCriado(record)
 
       // concluido_solicitante: não é notificação ao solicitante — é a
       // entrada na fila da Controladoria Contábil (mesma régua das outras
@@ -575,6 +642,71 @@ Deno.serve(async (req) => {
       })
       await enviar(dest, `⏰ ${venceu ? 'PAI com prazo vencido' : 'PAI com prazo se aproximando'} — ${record.numero}`, html)
       return ok('aviso_vencimento_pai notificado')
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // ETAPA 19 · LEMBRETE POR INATIVIDADE (X=2 dias) — chamado pela função
+    // de banco verificar_aprovacoes_pendentes, via pg_cron. A cadência (no
+    // máx. 1 a cada 2 dias por passo) já vem resolvida do SQL — aqui só
+    // envia. Mesmo botão "Abrir e aprovar" dos e-mails de fila.
+    // ═══════════════════════════════════════════════════════════════
+    if (table === 'lembrete_aprovacao_pai' && type === 'CRON') {
+      if (!(await flagAtivo('pai_lembrete_aprovador'))) return ok('pai_lembrete_aprovador: flag desativada')
+      const ehFormalizacao = record.etapa === 'controladoria_op' && record.ordem > 1
+      const dest = await emailsTitularEtapa(record.etapa, record.empresa_id, record.setor_id)
+      const cabecalho = ehFormalizacao ? 'PAI aguarda formalização' : 'PAI aguarda sua aprovação'
+      const mensagem = ehFormalizacao
+        ? `O PAI ${record.numero} aguarda formalização há ${record.dias} dias.`
+        : `O PAI ${record.numero} aguarda sua aprovação há ${record.dias} dias.`
+      const html = montarHtmlPAI({
+        numero: record.numero, titulo: record.titulo, cabecalho, emoji: '⏰', mensagem,
+        link: { tipo: 'pai', id: record.pai_id }, paraAprovador: true,
+      })
+      await enviar(dest, `⏰ Lembrete: ${cabecalho} — ${record.numero}`, html)
+      return ok('lembrete_aprovacao_pai notificado')
+    }
+
+    if (table === 'lembrete_aprovacao_aumento' && type === 'CRON') {
+      if (!(await flagAtivo('aum_lembrete_aprovador'))) return ok('aum_lembrete_aprovador: flag desativada')
+      const dest = await emailsTitularEtapa(record.etapa, record.empresa_id, record.setor_id)
+      const html = montarHtmlPAI({
+        numero: record.numero, cabecalho: 'Aumento de verba aguarda sua aprovação', emoji: '⏰',
+        mensagem: `O aumento de verba ${record.numero} aguarda sua aprovação há ${record.dias} dias.`,
+        link: { tipo: 'aumento', id: record.aumento_id }, paraAprovador: true,
+      })
+      await enviar(dest, `⏰ Lembrete: aumento de verba aguarda aprovação — ${record.numero}`, html)
+      return ok('lembrete_aprovacao_aumento notificado')
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // ETAPA 19 · ESCALONAMENTO AO MASTER (Y=4 dias) — mesma função/cron
+    // acima. Informativo: o master pode não ter alçada de decisão naquele
+    // passo, por isso o botão é "Abrir no sistema" (paraAprovador ausente),
+    // não "Abrir e aprovar".
+    // ═══════════════════════════════════════════════════════════════
+    if (table === 'escalonamento_aprovacao_pai' && type === 'CRON') {
+      if (!(await flagAtivo('pai_escalonamento_master'))) return ok('pai_escalonamento_master: flag desativada')
+      const etapaLabel = ETAPA_LABELS_PAI[record.etapa] ?? record.etapa
+      const html = montarHtmlPAI({
+        numero: record.numero, titulo: record.titulo,
+        cabecalho: 'PAI parado por inatividade', emoji: '🚨',
+        mensagem: `O PAI ${record.numero} está parado há ${record.dias} dias, aguardando ${etapaLabel}.`,
+        link: { tipo: 'pai', id: record.pai_id },
+      })
+      await enviar(await emailsMasters(), `🚨 Escalonamento: PAI parado há ${record.dias} dias — ${record.numero}`, html)
+      return ok('escalonamento_aprovacao_pai notificado')
+    }
+
+    if (table === 'escalonamento_aprovacao_aumento' && type === 'CRON') {
+      if (!(await flagAtivo('aum_escalonamento_master'))) return ok('aum_escalonamento_master: flag desativada')
+      const etapaLabel = ETAPA_LABELS_AUM[record.etapa] ?? record.etapa
+      const html = montarHtmlPAI({
+        numero: record.numero, cabecalho: 'Aumento de verba parado por inatividade', emoji: '🚨',
+        mensagem: `O aumento de verba ${record.numero} está parado há ${record.dias} dias, aguardando ${etapaLabel}.`,
+        link: { tipo: 'aumento', id: record.aumento_id },
+      })
+      await enviar(await emailsMasters(), `🚨 Escalonamento: aumento de verba parado há ${record.dias} dias — ${record.numero}`, html)
+      return ok('escalonamento_aprovacao_aumento notificado')
     }
 
     return ok('tabela ignorada')
