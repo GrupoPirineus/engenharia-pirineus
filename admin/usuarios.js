@@ -3,6 +3,7 @@ import { toast, fmtDate } from '../shared/ui.js';
 import { carregarAtribuicoes } from '../shared/acesso.js';
 import { renderAreasDiretorias } from './areas.js';
 import { renderUnidadesSetores } from './unidades.js';
+import { renderConfiguracoes } from './configuracoes.js';
 
 // ═══════════════════════════════════════════════════
 // ADMINISTRAÇÃO — usuários e atribuições (só isMaster())
@@ -40,7 +41,7 @@ const PAPEIS_POR_MUNDO = {
 };
 
 let filtroAtual = 'todos'; // 'todos' | 'pendentes'
-let secaoAdmin = 'usuarios'; // 'usuarios' | 'areas' | 'unidades'
+let secaoAdmin = 'usuarios'; // 'usuarios' | 'areas' | 'unidades' | 'configuracoes'
 
 export function montarAdmin() {
   document.getElementById('topbar-actions').innerHTML = '';
@@ -67,6 +68,10 @@ function construirNavAdmin() {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
         Unidades e Setores
       </button>
+      <button class="nav-item ${secaoAdmin === 'configuracoes' ? 'active' : ''}" onclick="navegarAdmin('configuracoes')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+        Configurações
+      </button>
     </div>`;
 }
 
@@ -75,7 +80,8 @@ export function navegarAdmin(secao) {
   construirNavAdmin();
   if (secao === 'usuarios') renderListaUsuarios();
   else if (secao === 'areas') renderAreasDiretorias();
-  else renderUnidadesSetores();
+  else if (secao === 'unidades') renderUnidadesSetores();
+  else renderConfiguracoes();
 }
 
 export async function renderListaUsuarios(filtro) {
