@@ -40,6 +40,12 @@
 //     (mesma função, Y=4 dias sem decisão) -> master(es), avisando em qual
 //     etapa o item está parado. A cadência (no máx. 1 lembrete/escalonamento
 //     a cada 2 dias por passo) é resolvida no SQL, não aqui.
+//
+// Etapa 21 (mundo Chamados) acrescenta, no mesmo arquivo/função:
+//   - CRON "lembrete_revisao_chamado" (chamado por verificar_revisoes_pendentes,
+//     enquanto chamados.status = 'revisao') -> solicitante; a partir do 2º
+//     aviso, com cópia ao(s) gestor(es). Botão com deep link ?chamado=<id>.
+//     Flag: config_notificacoes.evento = 'chamado_lembrete_revisao'.
 
 import nodemailer from 'npm:nodemailer@6.9.10'
 import { createClient } from 'npm:@supabase/supabase-js@2'
@@ -148,8 +154,14 @@ function montarHtml(opts: {
   emoji: string
   mensagem?: string   // frase explicativa em destaque (logo abaixo do cabeçalho)
   corpoExtra?: string // conteúdo injetado (motivo da recusa, texto do comentário)
+  // Etapa 21: deep link opcional (?chamado=<id>) e texto do botão. Ausentes
+  // = exatamente o botão de sempre ("Abrir o sistema" -> BASE_URL), então
+  // nenhum e-mail já existente muda.
+  chamadoId?: string
+  textoBotao?: string
 }): string {
-  const { titulo, codigo, cabecalho, emoji, mensagem, corpoExtra } = opts
+  const { titulo, codigo, cabecalho, emoji, mensagem, corpoExtra, chamadoId, textoBotao } = opts
+  const href = chamadoId ? `${BASE_URL}/?chamado=${encodeURIComponent(chamadoId)}` : BASE_URL
   const blocoMensagem = mensagem
     ? `<p style="margin:0 0 20px;font-size:15px;line-height:1.5;color:#0f172a">${escapeHtml(mensagem)}</p>`
     : ''
@@ -165,7 +177,7 @@ function montarHtml(opts: {
       <p style="margin:0 0 4px;font-size:18px;font-weight:700;color:#0f172a">${escapeHtml(codigo)}</p>
       <p style="margin:0 0 20px;font-size:15px;color:#334155">${escapeHtml(titulo)}</p>
       ${corpoExtra ?? ''}
-      <a href="${BASE_URL}" style="display:inline-block;background:#0d9488;color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;font-size:14px">Abrir o sistema</a>
+      <a href="${href}" style="display:inline-block;background:#0d9488;color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;font-size:14px">${escapeHtml(textoBotao ?? 'Abrir o sistema')}</a>
       <p style="margin:20px 0 0;font-size:12px;color:#94a3b8">Localize o chamado <strong>${escapeHtml(codigo)}</strong> na sua lista após entrar.</p>
     </div>
     <div style="background:#f8fafc;padding:14px 24px;font-size:11px;color:#94a3b8;text-align:center">
@@ -178,6 +190,16 @@ async function enviar(destinatarios: (string | null)[], assunto: string, html: s
   const unicos = [...new Set(destinatarios.filter((e): e is string => !!e))]
   if (unicos.length === 0) return
   await transport.sendMail({ from: FROM, to: unicos.join(', '), subject: assunto, html })
+}
+
+// Etapa 21: igual a enviar(), mas com cópia (Cc). Quem já está em "para"
+// sai da cópia (ex.: solicitante que também é gestor não recebe duas vezes).
+// Sem ninguém em "para", não envia — a cópia nunca vira destinatário principal.
+async function enviarComCopia(para: (string | null)[], copia: (string | null)[], assunto: string, html: string) {
+  const to = [...new Set(para.filter((e): e is string => !!e))]
+  if (to.length === 0) return
+  const cc = [...new Set(copia.filter((e): e is string => !!e && !to.includes(e)))]
+  await transport.sendMail({ from: FROM, to: to.join(', '), ...(cc.length ? { cc: cc.join(', ') } : {}), subject: assunto, html })
 }
 
 async function destinatariosPorStatus(evento: string, ch: any): Promise<(string | null)[]> {
@@ -707,6 +729,34 @@ Deno.serve(async (req) => {
       })
       await enviar(await emailsMasters(), `🚨 Escalonamento: aumento de verba parado há ${record.dias} dias — ${record.numero}`, html)
       return ok('escalonamento_aprovacao_aumento notificado')
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // ETAPA 21 · CHAMADOS — LEMBRETE DE REVISÃO (chamado pela função de
+    // banco verificar_revisoes_pendentes, via pg_cron). Prazo, cadência e o
+    // número do aviso já vêm resolvidos do SQL — aqui só monta e envia.
+    // 1º aviso: só o solicitante. A partir do 2º: solicitante + cópia ao(s)
+    // gestor(es) (mesma lista de emailsDosGestores dos outros e-mails de
+    // Chamados). Botão com deep link direto para o chamado.
+    // ═══════════════════════════════════════════════════════════════
+    if (table === 'lembrete_revisao_chamado' && type === 'CRON') {
+      if (!(await flagAtivo('chamado_lembrete_revisao'))) return ok('chamado_lembrete_revisao: flag desativada')
+      const aviso = Number(record.aviso) || 1
+      const copia = aviso >= 2 ? await emailsDosGestores() : []
+      const html = montarHtml({
+        titulo: record.titulo,
+        codigo: record.codigo,
+        cabecalho: 'Chamado aguardando sua revisão',
+        emoji: '⏰',
+        mensagem: `O chamado ${record.codigo} está em Revisão há ${record.dias} dias aguardando você. Abra o chamado para aprovar e concluir, ou solicitar correção.`,
+        corpoExtra: aviso >= 2
+          ? `<p style="margin:0 0 20px;font-size:13px;color:#475569">Este é o ${aviso}º lembrete — a gestão de Engenharia está em cópia.</p>`
+          : undefined,
+        chamadoId: record.chamado_id,
+        textoBotao: 'Abrir e revisar',
+      })
+      await enviarComCopia([await emailPorId(record.solicitante_id)], copia, `⏰ Lembrete: chamado aguardando sua revisão — ${record.codigo}`, html)
+      return ok(`lembrete_revisao_chamado notificado (aviso ${aviso}${copia.length ? ', com cópia aos gestores' : ''})`)
     }
 
     return ok('tabela ignorada')

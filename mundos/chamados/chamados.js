@@ -106,7 +106,29 @@ export async function renderMeusChamados() {
 // ═══════════════════════════════════════════════════
 // MINHA FILA (ENGENHEIRO)
 // ═══════════════════════════════════════════════════
-export async function renderMinhaFila() {
+// Ordenações da fila (mesmo estilo de chip de CHAMADOS_CHIPS). Só reordenam —
+// nenhuma esconde chamado. A escolha fica em memória enquanto a sessão do
+// mundo durar, pra fila não voltar pra Prioridade a cada ação que re-renderiza
+// a tela (navigateTo(currentPage)).
+const FILA_ORDENACOES = [
+  { key: 'prioridade', label: 'Prioridade' },
+  { key: 'data', label: 'Data desejada' }
+];
+let ordemFilaAtiva = 'prioridade';
+
+const PRIO_ORDEM = { urgente:0, alta:1, media:2, baixa:3 };
+const cmpPrio = (a, b) => (PRIO_ORDEM[a.prioridade] ?? 9) - (PRIO_ORDEM[b.prioridade] ?? 9);
+// data_desejada vem como 'YYYY-MM-DD' — comparação de string já é cronológica,
+// e o mais antigo primeiro coloca os vencidos no topo. Sem data vai pro fim.
+const cmpData = (a, b) => {
+  if (!a.data_desejada && !b.data_desejada) return 0;
+  if (!a.data_desejada) return 1;
+  if (!b.data_desejada) return -1;
+  return a.data_desejada < b.data_desejada ? -1 : a.data_desejada > b.data_desejada ? 1 : 0;
+};
+
+export async function renderMinhaFila(ordem = ordemFilaAtiva) {
+  ordemFilaAtiva = FILA_ORDENACOES.some(o => o.key === ordem) ? ordem : 'prioridade';
   document.getElementById('topbar-title').textContent = 'Minha Fila';
   document.getElementById('topbar-actions').innerHTML = '';
   const page = document.getElementById('page-content');
@@ -118,12 +140,19 @@ export async function renderMinhaFila() {
     .not('status', 'in', '("concluido","rejeitado")')
     .order('criado_em', {ascending:false});
 
-  const prioOrder = { urgente:0, alta:1, media:2, baixa:3 };
-  const sorted = (chamados||[]).sort((a,b) => (prioOrder[a.prioridade]??9) - (prioOrder[b.prioridade]??9));
+  // Array.sort é estável: empate total mantém a ordem do fetch (mais recente primeiro).
+  const sorted = (chamados||[]).sort(ordemFilaAtiva === 'data'
+    ? (a,b) => cmpData(a,b) || cmpPrio(a,b)
+    : (a,b) => cmpPrio(a,b) || cmpData(a,b));
 
   page.innerHTML = `
     <div class="table-card">
-      <div class="table-header"><div class="table-title">Chamados Atribuídos a Mim</div></div>
+      <div class="table-header">
+        <div class="table-title">Chamados Atribuídos a Mim</div>
+        <div class="filters">
+          ${FILA_ORDENACOES.map(o => `<button class="btn btn-sm ${ordemFilaAtiva === o.key ? 'btn-primary' : 'btn-secondary'}" onclick="renderMinhaFila('${o.key}')">${o.label}</button>`).join('')}
+        </div>
+      </div>
       ${sorted.length === 0 ? `<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">Nenhum chamado na fila</div><div class="empty-desc">Você está em dia!</div></div>` : `
       <div style="overflow-x:auto">
       <table>
@@ -862,7 +891,7 @@ export async function submeterChamado() {
 // Funções chamadas via atributos inline (onclick/onchange) precisam estar em window,
 // pois módulos ES não expõem suas funções no escopo global automaticamente.
 Object.assign(window, {
-  renderChamados, openChamado, moverStatus, confirmarEnvioRevisao, aprovarChamado, confirmarAprovacao,
+  renderChamados, renderMinhaFila, openChamado, moverStatus, confirmarEnvioRevisao, aprovarChamado, confirmarAprovacao,
   rejeitarChamado, abrirRevisarReenviar, removerAnexoExistente, confirmarReenvio,
   atribuirEngenheiro, confirmarAtribuicao, aprovarRevisao, rejeitarRevisao,
   confirmarRejeicaoRevisao, enviarCorrecaoEngenheiro, reabrirConcluido, definirPrioridade,

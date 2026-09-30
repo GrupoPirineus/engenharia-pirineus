@@ -8,6 +8,7 @@ import { montarMundoInvestimentos } from '../mundos/investimentos/main.js';
 import { abrirPaiPorDeepLink } from '../mundos/investimentos/aprovacao.js';
 import { abrirAumentoPorDeepLink } from '../mundos/investimentos/aumento.js';
 import { montarAdmin } from '../admin/usuarios.js';
+import { openChamado } from '../mundos/chamados/chamados.js';
 
 const ICONES = { chamados: '🛠', investimentos: '📈', administracao: '⚙' };
 const LABELS = { chamados: 'Chamados', investimentos: 'Investimentos', administracao: 'Administração' };
@@ -18,6 +19,8 @@ let mundoAtivo = null;
 
 // ═══════════════════════════════════════════════════
 // DEEP LINK DE E-MAIL (PAI/Aumento) — ?pai=<id> / ?aumento=<id> na URL.
+// Etapa 21: também ?chamado=<id> (lembrete de revisão do mundo Chamados) —
+// mesmo mecanismo, mas roteado para o mundo Chamados em vez de Investimentos.
 // Guardado em sessionStorage (não só lido da URL) porque precisa
 // sobreviver tanto a um reload de página (login e-mail/senha, ver
 // shared/auth.js doLogin) quanto a um redirect OAuth que NÃO preserva
@@ -31,14 +34,18 @@ function capturarDeepLinkDaUrl() {
   const params = new URLSearchParams(window.location.search);
   const paiId = params.get('pai');
   const aumentoId = params.get('aumento');
-  if (!paiId && !aumentoId) return;
+  const chamadoId = params.get('chamado');
+  if (!paiId && !aumentoId && !chamadoId) return;
 
   sessionStorage.setItem(DEEP_LINK_KEY, JSON.stringify(
-    paiId ? { tipo: 'pai', id: paiId } : { tipo: 'aumento', id: aumentoId }
+    paiId ? { tipo: 'pai', id: paiId }
+      : aumentoId ? { tipo: 'aumento', id: aumentoId }
+      : { tipo: 'chamado', id: chamadoId }
   ));
   const url = new URL(window.location.href);
   url.searchParams.delete('pai');
   url.searchParams.delete('aumento');
+  url.searchParams.delete('chamado');
   window.history.replaceState({}, '', url);
 }
 
@@ -83,6 +90,13 @@ export async function iniciarCasca() {
   // pessoa clicou num e-mail sobre um item específico de Investimentos.
   // Sem acesso a Investimentos: descarta e segue o fluxo normal, com aviso
   // ("abrir normal com aviso", em vez de travar ou dar erro).
+  // Etapa 21: deep link de chamado vai para o mundo Chamados (mesma regra:
+  // sem acesso, descarta com aviso e segue o fluxo normal).
+  if (lerDeepLinkPendente()?.tipo === 'chamado') {
+    if (destinos.includes('chamados')) { entrarNoMundo('chamados'); return; }
+    consumirDeepLinkPendente();
+    toast('Você não tem acesso a Chamados para abrir o chamado do link.', 'error');
+  }
   if (lerDeepLinkPendente()) {
     if (destinos.includes('investimentos')) { entrarNoMundo('investimentos'); return; }
     const tipo = consumirDeepLinkPendente()?.tipo;
@@ -128,6 +142,10 @@ export async function entrarNoMundo(destino) {
       definirSessaoChamados(usuarioAtual);
       setPage('app-screen');
       montarMundoChamados(usuarioAtual);
+      // Etapa 21: deep link do lembrete de revisão — abre o detalhe do
+      // chamado por cima da tela inicial (mesmo modal do clique na lista),
+      // onde o solicitante já encontra "Aprovar e Concluir"/"Solicitar Correção".
+      if (lerDeepLinkPendente()?.tipo === 'chamado') await openChamado(consumirDeepLinkPendente().id);
       break;
     case 'investimentos':
       definirSessaoInvestimentos(usuarioAtual);
