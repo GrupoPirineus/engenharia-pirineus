@@ -66,7 +66,23 @@ const SECOES = [
         <li>Adicione as linhas do bolo: setor, descrição e valor. O resumo por área mostra o bolo somado por superintendência.</li>
         <li>Clique em <strong>Publicar plano</strong> para passar de rascunho a aprovado — só planos aprovados ficam disponíveis para os PAIs.</li>
       </ol>
-      <div class="ajuda-nota">Depois de publicado, uma linha em vigor não é editada em valor/descrição: para mudar, cancele a linha (se não tiver reserva) e crie outra, sem estourar o teto congelado da área. Aumentos entram pelo fluxo próprio de aumento de verba.</div>
+      <h4>3.1.1 Janela de ajuste do plano publicado</h4>
+      <p>Um plano já publicado ainda pode ser ajustado até a <strong>data de corte</strong>: por padrão, 31/12 do ano anterior ao do plano (o plano de 2027 aceita ajustes até 31/12/2026). A data é configurada pelo administrador em Administração → Configurações → Calendário do Plano. Enquanto a janela está aberta, a tela do Plano mostra até quando.</p>
+      <ul>
+        <li>Use <strong>Ajustar</strong> numa linha para alterar valor, descrição ou setor; <strong>+ Incluir linha</strong> para uma linha nova; <strong>Cancelar</strong> para tirar uma linha sem reserva.</li>
+        <li>Durante a janela, o <strong>teto da área acompanha os ajustes</strong>: passa a ser a soma das linhas ativas da área.</li>
+        <li>A partir do dia seguinte ao corte o plano <strong>congela</strong>: o teto não muda mais, as linhas da publicação ficam travadas e acréscimos só entram por <strong>aumento de verba</strong>. Não há exceção, nem para o administrador.</li>
+      </ul>
+      <h4>3.1.2 Proteções (PAIs já abertos)</h4>
+      <ul>
+        <li>Nenhuma linha pode ficar com valor menor que o já reservado nela por PAIs.</li>
+        <li>Linha com reserva não pode mudar de setor/área nem ser cancelada.</li>
+        <li>Nenhum ajuste pode deixar o teto da área abaixo do total já reservado na área.</li>
+      </ul>
+      <p>Essas regras são conferidas na tela e também no banco — um ajuste que as viole é recusado com a explicação do motivo.</p>
+      <h4>3.1.3 Auditoria</h4>
+      <p>Todo ajuste de plano publicado (inclusão, alteração ou cancelamento) <strong>exige motivo</strong> e fica registrado com quem fez, quando, o campo alterado e os valores antes/depois. O histórico aparece no fim da tela do Plano e na aba <strong>Ajustes do plano</strong> em Relatórios (também no XLSX). Não há e-mail para ajustes.</p>
+      <div class="ajuda-nota">Linhas de aumento de verba e de devolução (excedente de encerramento) são geradas pelos próprios fluxos e não são ajustadas na tela do Plano.</div>
       <h4>3.2 Criticar o PAI (e o aumento de verba)</h4>
       <ol>
         <li>Em <strong>Aprovações</strong>, aba "Controladoria Operacional", abra o PAI ou o aumento da fila.</li>

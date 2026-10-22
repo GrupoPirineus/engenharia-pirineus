@@ -1,8 +1,9 @@
 import { sb } from '../../shared/supabase.js';
-import { toast, fmtDate } from '../../shared/ui.js';
+import { toast, fmtDate, fmtDateTime } from '../../shared/ui.js';
 import { temPapel } from '../../shared/acesso.js';
 import { fmtMoeda, badgeStatusPai, STATUS_PAI_LABELS, TIPO_INVESTIMENTO_LABELS } from './dashboard.js';
 import { resolverEscoposSolicitante } from './solicitacao.js';
+import { TIPO_AJUSTE_LABELS, CAMPO_AJUSTE_LABELS, fmtValorAjuste } from './plano.js';
 
 // ═══════════════════════════════════════════════════
 // RELATÓRIOS EXPORTÁVEIS DO MUNDO INVESTIMENTOS (Etapa 12/16)
@@ -19,9 +20,13 @@ import { resolverEscoposSolicitante } from './solicitacao.js';
 //
 // Filtros (ano, empresa, área, status, tipo) recarregam os dados; trocar
 // de aba só troca a visão sobre os dados já carregados (estado.dados).
-// Exportação (XLSX/PDF) sempre gera as 5 tabelas (Consolidado por área,
-// Consolidado por unidade, Por categoria de composição, PAIs, Auditoria)
-// no recorte atual, independente de qual aba estiver aberta no clique.
+// Exportação (XLSX/PDF) sempre gera as 6 tabelas (Consolidado por área,
+// Consolidado por unidade, Por categoria de composição, PAIs, Auditoria,
+// Ajustes do plano) no recorte atual, independente da aba aberta no clique.
+//
+// "Ajustes do plano" (Etapa 23) lê ajustes_plano dos planos do ano e das
+// empresas do recorte; o filtro de área vale pela área atual do setor da
+// linha ajustada. Filtros de status/tipo são de PAI e não se aplicam a ela.
 // ═══════════════════════════════════════════════════
 
 const PAPEIS_ALCADA_AMPLA = ['controladoria_op', 'inv_aprovador', 'diretor', 'diretor_ceo', 'controladoria_contabil'];
@@ -114,7 +119,7 @@ function areaIdsEfetivos() {
 async function carregarDados() {
   const empresaIds = empresaIdsEfetivos();
   const areaIds = areaIdsEfetivos();
-  if (!empresaIds.length) return { saldos: [], realizados: [], pais: [], devolucaoLinhas: [], bensPorPai: {}, itens: [] };
+  if (!empresaIds.length) return { saldos: [], realizados: [], pais: [], devolucaoLinhas: [], bensPorPai: {}, itens: [], ajustes: [] };
 
   let saldosQuery = sb.from('saldo_areas').select('*').eq('ano_calendario', estado.ano).in('empresa_id', empresaIds);
   let realizadosQuery = sb.from('realizado_por_area').select('*').eq('ano_calendario', estado.ano).in('empresa_id', empresaIds);
@@ -124,12 +129,15 @@ async function carregarDados() {
   if (estado.filtros.statusList.length) paisQuery = paisQuery.in('status', estado.filtros.statusList);
   if (estado.filtros.tipos.length) paisQuery = paisQuery.in('tipo', estado.filtros.tipos);
 
-  const [{ data: saldos }, { data: realizados }, { data: paisRows }, { data: devolucaoLinhas }, { data: mapaSetorArea }] = await Promise.all([
+  const [{ data: saldos }, { data: realizados }, { data: paisRows }, { data: devolucaoLinhas }, { data: mapaSetorArea }, { data: ajustesRows }] = await Promise.all([
     saldosQuery, realizadosQuery, paisQuery,
     sb.from('linhas_plano').select('valor,setor_id,planos_investimento!inner(empresa_id,ano_calendario)')
       .eq('tipo', 'devolucao').eq('cancelada', false)
       .eq('planos_investimento.ano_calendario', estado.ano).in('planos_investimento.empresa_id', empresaIds),
-    sb.from('empresa_setores').select('empresa_id,setor_id,area_id,areas(nome)').in('empresa_id', empresaIds)
+    sb.from('empresa_setores').select('empresa_id,setor_id,area_id,areas(nome)').in('empresa_id', empresaIds),
+    sb.from('ajustes_plano').select('*, usuario:feito_por(nome), linhas_plano(descricao,setor_id), planos_investimento!inner(empresa_id,ano_calendario)')
+      .eq('planos_investimento.ano_calendario', estado.ano).in('planos_investimento.empresa_id', empresaIds)
+      .order('feito_em', { ascending: false })
   ]);
 
   const areaDoSetor = {};
@@ -157,7 +165,13 @@ async function carregarDados() {
     (bensPorPai[i.pai_id] = bensPorPai[i.pai_id] || []).push(i.numero_bem);
   });
 
-  return { saldos: saldos || [], realizados: realizados || [], pais: paisFiltrados, devolucaoLinhas: devolucaoFiltrada, bensPorPai, itens: itens || [] };
+  let ajustes = (ajustesRows || []).map(a => ({
+    ...a, _empresaId: a.planos_investimento?.empresa_id,
+    _area: areaDoSetor[`${a.planos_investimento?.empresa_id}·${a.linhas_plano?.setor_id}`] || null
+  }));
+  if (areaIds) ajustes = ajustes.filter(a => a._area && areaIds.includes(a._area.id));
+
+  return { saldos: saldos || [], realizados: realizados || [], pais: paisFiltrados, devolucaoLinhas: devolucaoFiltrada, bensPorPai, itens: itens || [], ajustes };
 }
 
 // ═══════════════════════════════════════════════════
@@ -275,10 +289,11 @@ function renderCasca() {
       </div>
     </div>
 
-    <div class="auth-tabs" style="max-width:520px;margin:20px 0">
+    <div class="auth-tabs" style="max-width:680px;margin:20px 0">
       <button class="auth-tab ${estado.aba === 'consolidado' ? 'active' : ''}" onclick="onAbaRelatorioChange('consolidado')">Consolidado</button>
       <button class="auth-tab ${estado.aba === 'pais' ? 'active' : ''}" onclick="onAbaRelatorioChange('pais')">PAIs</button>
       <button class="auth-tab ${estado.aba === 'auditoria' ? 'active' : ''}" onclick="onAbaRelatorioChange('auditoria')">Auditoria de encerramentos</button>
+      <button class="auth-tab ${estado.aba === 'ajustes' ? 'active' : ''}" onclick="onAbaRelatorioChange('ajustes')">Ajustes do plano</button>
     </div>
 
     <div id="relatorios-conteudo"></div>`;
@@ -301,6 +316,7 @@ function renderConteudoAtual() {
     </div>
     ${estado.aba === 'consolidado' ? renderAbaConsolidado(estado.dados)
       : estado.aba === 'pais' ? renderAbaPais(estado.dados)
+      : estado.aba === 'ajustes' ? renderAbaAjustes(estado.dados)
       : renderAbaAuditoria(estado.dados)}`;
 }
 
@@ -445,8 +461,44 @@ function renderAbaAuditoria(dados) {
     </div>`;
 }
 
+// Uma linha por campo ajustado — mesmas colunas na tela, no XLSX e no PDF.
+function linhasAjustes(dados) {
+  return dados.ajustes.map(a => ({
+    'Data': fmtDateTime(a.feito_em),
+    'Empresa': nomeEmpresaPorId(a._empresaId),
+    'Área': a._area?.nome || '—',
+    'Linha': a.linhas_plano?.descricao || '—',
+    'Tipo': TIPO_AJUSTE_LABELS[a.tipo] || a.tipo,
+    'Campo': CAMPO_AJUSTE_LABELS[a.campo] || a.campo,
+    'Antes': fmtValorAjuste(a.campo, a.valor_antes),
+    'Depois': fmtValorAjuste(a.campo, a.valor_depois),
+    'Motivo': a.motivo,
+    'Fase': a.na_janela ? 'Janela de ajuste' : 'Após o corte',
+    'Feito por': a.usuario?.nome || '—'
+  }));
+}
+const COLUNAS_AJUSTES = ['Data', 'Empresa', 'Área', 'Linha', 'Tipo', 'Campo', 'Antes', 'Depois', 'Motivo', 'Fase', 'Feito por'];
+
+function renderAbaAjustes(dados) {
+  const linhas = linhasAjustes(dados);
+  if (!linhas.length) return `<div class="table-card">${telaVaziaTabela('Nenhum ajuste de plano publicado neste recorte.')}</div>`;
+  return `
+    <div class="table-card">
+      <div class="table-header"><div class="table-title">Ajustes do plano · ${linhas.length}</div></div>
+      <div class="text-xs text-muted" style="padding:0 16px 8px">Alterações feitas pela Controladoria Operacional em planos já publicados — uma linha por campo alterado. Filtros de status/tipo de PAI não se aplicam aqui.</div>
+      <div style="overflow-x:auto">
+      <table>
+        <thead><tr>${COLUNAS_AJUSTES.map(c => `<th>${c}</th>`).join('')}</tr></thead>
+        <tbody>
+          ${linhas.map(l => `<tr>${COLUNAS_AJUSTES.map(c => `<td class="${c === 'Motivo' || c === 'Data' ? 'text-xs' : ''}">${l[c]}</td>`).join('')}</tr>`).join('')}
+        </tbody>
+      </table>
+      </div>
+    </div>`;
+}
+
 // ═══════════════════════════════════════════════════
-// EXPORTAÇÃO — sempre as 5 tabelas do recorte atual (ano + filtros),
+// EXPORTAÇÃO — sempre as 6 tabelas do recorte atual (ano + filtros),
 // independente da aba aberta no momento do clique.
 // ═══════════════════════════════════════════════════
 function resumoFiltrosTexto() {
@@ -488,19 +540,20 @@ function montarLinhasExportacao(dados) {
       Categoria: l.nome, 'Nº de PAIs': l.qtdPais, Valor: l.valor, '% do total': Math.round(l.pct * 10) / 10
     }))
     : [];
-  return { porArea, porUnidade, porCategoria, paisLinhas, auditoriaLinhas };
+  return { porArea, porUnidade, porCategoria, paisLinhas, auditoriaLinhas, ajustesLinhas: linhasAjustes(dados) };
 }
 
 export function exportarRelatorioXlsx() {
   if (!estado?.dados) return;
   if (typeof XLSX === 'undefined') { toast('Biblioteca de exportação (XLSX) não carregou — verifique sua conexão.', 'error'); return; }
-  const { porArea, porUnidade, porCategoria, paisLinhas, auditoriaLinhas } = montarLinhasExportacao(estado.dados);
+  const { porArea, porUnidade, porCategoria, paisLinhas, auditoriaLinhas, ajustesLinhas } = montarLinhasExportacao(estado.dados);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(porArea.length ? porArea : [{ Área: 'Sem dados para este recorte' }]), 'Consolidado - Área');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(porUnidade.length ? porUnidade : [{ Unidade: 'Sem dados para este recorte' }]), 'Consolidado - Unidade');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(porCategoria.length ? porCategoria : [{ Categoria: 'Sem dados para este recorte' }]), 'Por categoria de composição');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(paisLinhas.length ? paisLinhas : [{ Número: 'Sem dados para este recorte' }]), 'PAIs');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(auditoriaLinhas.length ? auditoriaLinhas : [{ Número: 'Sem dados para este recorte' }]), 'Auditoria de encerramentos');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ajustesLinhas.length ? ajustesLinhas : [{ Data: 'Sem dados para este recorte' }]), 'Ajustes do plano');
   XLSX.writeFile(wb, `relatorio-investimentos-${estado.ano}-${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
@@ -560,7 +613,7 @@ function tabelaHtmlExport(titulo, colunas, linhas) {
 
 export function exportarRelatorioPdf() {
   if (!estado?.dados) return;
-  const { porArea, porUnidade, porCategoria, paisLinhas, auditoriaLinhas } = montarLinhasExportacao(estado.dados);
+  const { porArea, porUnidade, porCategoria, paisLinhas, auditoriaLinhas, ajustesLinhas } = montarLinhasExportacao(estado.dados);
   // tabelaHtmlExport formata todo número como moeda — Nº de PAIs e % vão
   // como texto já formatado.
   const porCategoriaPdf = porCategoria.map(l => ({
@@ -577,6 +630,7 @@ export function exportarRelatorioPdf() {
     ${tabelaHtmlExport('Por categoria de composição', ['Categoria', 'Nº de PAIs', 'Valor', '% do total'], porCategoriaPdf)}
     ${tabelaHtmlExport('PAIs', ['Número', 'Empresa', 'Área', 'Título', 'Tipo', 'Valor total', 'Status', 'Previsão de conclusão', 'Código MRP'], paisLinhas)}
     ${tabelaHtmlExport('Auditoria de encerramentos', ['Número', 'Empresa', 'Área', 'Valor aprovado', 'Realizado', 'Saldo apurado', 'Destino', 'Número(s) do bem', 'Encerrado em'], auditoriaLinhas)}
+    ${tabelaHtmlExport('Ajustes do plano', COLUNAS_AJUSTES, ajustesLinhas)}
     <div class="footer">Sistema de Gestão de Engenharia — Grupo Pirineus</div>`;
   abrirJanelaImpressaoRelatorio(corpo);
 }

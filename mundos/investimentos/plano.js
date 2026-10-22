@@ -23,14 +23,56 @@ import { anoVigente, renderOpcoesAno, dicaAno } from './ano.js';
 //     aumento de verba (etapa futura).
 // Cancelar uma linha ativa libera espaço dentro do MESMO teto (não
 // aumenta o teto) para uma linha nova.
+//
+// JANELA DE AJUSTE (Etapa 23): até a data de corte (padrão 31/12 do ano
+// anterior ao plano, configurável em Administração → Configurações →
+// Calendário do Plano), o plano publicado pode ser ajustado: alterar
+// valor/descrição/setor de qualquer linha planejada, incluir e cancelar
+// linhas — e o teto da área acompanha (recalculado no banco). Depois do
+// corte vale a regra acima (teto congelado). Em plano publicado, toda
+// gravação de linha planejada passa pelas funções plano_incluir_linha /
+// plano_alterar_linha / plano_cancelar_linha, com motivo obrigatório,
+// e vira registro em ajustes_plano. As proteções (valor ≥ reservado,
+// linha com reserva não muda de setor nem cancela, teto ≥ reservado da
+// área) são checadas aqui para dar a mensagem na hora e de novo no banco
+// (triggers de linhas_plano), que é quem garante.
 // ═══════════════════════════════════════════════════
 
 const STATUS_LABELS = { rascunho: 'Rascunho', aprovado: 'Aprovado', encerrado: 'Encerrado' };
 const STATUS_BADGE = { rascunho: 'badge-rascunho', aprovado: 'badge-success', encerrado: 'badge-concluido' };
 
+export const TIPO_AJUSTE_LABELS = { inclusao: 'Inclusão', alteracao: 'Alteração', cancelamento: 'Cancelamento' };
+export const CAMPO_AJUSTE_LABELS = { setor: 'Setor', descricao: 'Descrição', valor: 'Valor', situacao: 'Situação' };
+
+// valor_antes/valor_depois chegam como texto: 'valor' é número cru e
+// 'situacao' traz o valor entre parênteses ("Ativa (150000.00)").
+export function fmtValorAjuste(campo, v) {
+  if (v === null || v === undefined || v === '') return '—';
+  if (campo === 'valor') return fmtMoeda(Number(v));
+  if (campo === 'situacao') return String(v).replace(/\((-?[\d.]+)\)/, (_, n) => `(${fmtMoeda(Number(n))})`);
+  return v;
+}
+
 let estado = null;
 
 function numOrZero(v) { const n = parseFloat(v); return isNaN(n) ? 0 : n; }
+
+// Data de hoje em Brasília, 'AAAA-MM-DD' — mesma referência do banco
+// (hoje_brasilia()), para a tela e o trigger concordarem no dia do corte.
+function hojeBrasilia() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+}
+
+function fmtDataIso(iso) { const [a, m, d] = iso.split('-'); return `${d}/${m}/${a}`; }
+
+async function carregarCorte() {
+  const { data, error } = await sb.from('config_prazos').select('dia_corte_plano,mes_corte_plano').eq('id', 1).maybeSingle();
+  if (error) console.error('Erro ao carregar data de corte do plano:', error);
+  const dia = data?.dia_corte_plano ?? 31;
+  const mes = data?.mes_corte_plano ?? 12;
+  estado.corte = `${estado.ano - 1}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+  estado.janelaAberta = hojeBrasilia() <= estado.corte;
+}
 
 export async function renderPlanoInvestimento() {
   document.getElementById('topbar-title').textContent = 'Plano de Investimento';
@@ -45,7 +87,8 @@ export async function renderPlanoInvestimento() {
   estado = {
     empresas, empresaId: empresas[0].id, ano: anoVigente(),
     planoId: null, status: null, aprovadoEm: null, criadoPor: null,
-    linhas: [], reservadoPorLinha: {}, tetoPorArea: {}, setoresDaEmpresa: []
+    linhas: [], reservadoPorLinha: {}, tetoPorArea: {}, setoresDaEmpresa: [],
+    corte: null, janelaAberta: false, ajustes: []
   };
 
   await carregarPlano();
@@ -65,7 +108,7 @@ async function carregarSetoresDaEmpresa() {
 // Abre o plano de (empresa, ano) se existir; senão cria em rascunho —
 // "carga do plano" começa direto pronta para receber linhas.
 async function carregarPlano() {
-  await carregarSetoresDaEmpresa();
+  await Promise.all([carregarSetoresDaEmpresa(), carregarCorte()]);
 
   let { data: plano, error } = await sb.from('planos_investimento').select('*')
     .eq('empresa_id', estado.empresaId).eq('ano_calendario', estado.ano).maybeSingle();
@@ -84,22 +127,30 @@ async function carregarPlano() {
   estado.aprovadoEm = plano.aprovado_em;
   estado.criadoPor = plano.criado_por;
 
-  if (estado.status === 'aprovado') {
-    const { data: tetos, error: erroTetos } = await sb.from('teto_area_plano').select('area_id,valor_teto').eq('plano_id', estado.planoId);
-    if (erroTetos) console.error('Erro ao carregar teto por área:', erroTetos);
-    estado.tetoPorArea = {};
-    (tetos || []).forEach(t => { estado.tetoPorArea[t.area_id] = numOrZero(t.valor_teto); });
-  } else {
-    estado.tetoPorArea = {};
-  }
-
   await carregarLinhas();
+}
+
+// Teto e histórico mudam a cada ajuste (na janela o banco recalcula o
+// teto) — por isso são recarregados junto com as linhas.
+async function carregarTetosEAjustes() {
+  estado.tetoPorArea = {};
+  estado.ajustes = [];
+  if (estado.status !== 'aprovado') return;
+  const [{ data: tetos, error: erroTetos }, { data: ajustes, error: erroAjustes }] = await Promise.all([
+    sb.from('teto_area_plano').select('area_id,valor_teto').eq('plano_id', estado.planoId),
+    sb.from('ajustes_plano').select('*, usuario:feito_por(nome), linhas_plano(descricao)').eq('plano_id', estado.planoId).order('feito_em', { ascending: false })
+  ]);
+  if (erroTetos) console.error('Erro ao carregar teto por área:', erroTetos);
+  if (erroAjustes) console.error('Erro ao carregar histórico de ajustes:', erroAjustes);
+  (tetos || []).forEach(t => { estado.tetoPorArea[t.area_id] = numOrZero(t.valor_teto); });
+  estado.ajustes = ajustes || [];
 }
 
 async function carregarLinhas() {
   const [{ data: linhas, error: erroLinhas }, { data: reservas, error: erroReservas }] = await Promise.all([
     sb.from('linhas_plano').select('*').eq('plano_id', estado.planoId).order('criado_em'),
-    sb.from('saldo_linhas').select('linha_id,reservado').eq('plano_id', estado.planoId)
+    sb.from('saldo_linhas').select('linha_id,reservado').eq('plano_id', estado.planoId),
+    carregarTetosEAjustes()
   ]);
   if (erroLinhas) { toast('Erro ao carregar linhas: ' + erroLinhas.message, 'error'); estado.linhas = []; return; }
   if (erroReservas) console.error('Erro ao carregar reservas das linhas:', erroReservas);
@@ -120,19 +171,25 @@ async function carregarLinhas() {
   }));
 }
 
-// Uma linha só é editável quando: o plano ainda é rascunho, OU (o plano já
-// foi aprovado, mas essa linha nasceu DEPOIS da publicação e ainda não tem
-// reserva). Linhas que já existiam na publicação ficam travadas para
-// sempre — só sobra cancelar.
+// Edição em linha (inputs da tabela) só existe no rascunho. Em plano
+// publicado a edição é pelo modal "Ajustar linha", que exige motivo.
 function linhaEditavel(linha) {
-  if (linha.cancelada) return false;
-  if (estado.status !== 'aprovado') return true;
+  return !linha.cancelada && estado.status === 'rascunho';
+}
+
+// Plano publicado — só linhas 'planejada' (aumento e devolução vêm dos
+// próprios fluxos e não são ajustadas aqui). Na janela, qualquer linha
+// planejada ativa; depois do corte, a regra da Etapa 6: só linha nascida
+// depois da publicação e ainda sem reserva.
+function linhaAjustavel(linha) {
+  if (estado.status !== 'aprovado' || linha.cancelada || linha.tipo !== 'planejada') return false;
+  if (estado.janelaAberta) return true;
   const posPublicacao = estado.aprovadoEm && linha.criadoEm > estado.aprovadoEm;
   return posPublicacao && linha.reservado === 0;
 }
 
 function linhaCancelavel(linha) {
-  return estado.status === 'aprovado' && !linha.cancelada && linha.reservado === 0;
+  return estado.status === 'aprovado' && !linha.cancelada && linha.tipo === 'planejada' && linha.reservado === 0;
 }
 
 function somaAreaAtiva(areaId, excluirLinhaId) {
@@ -151,6 +208,8 @@ function legendaAreaSetor(setorInfo, excluirLinhaId = null) {
   if (!setorInfo.areaId) return `${setorInfo.setorNome} · sem área vinculada`;
   if (estado.status !== 'aprovado') return `${setorInfo.setorNome} · ${setorInfo.areaNome}`;
   const teto = estado.tetoPorArea[setorInfo.areaId] ?? 0;
+  // Na janela de ajuste o teto acompanha as linhas — "livre" seria sempre 0.
+  if (estado.janelaAberta) return `${setorInfo.setorNome} · ${setorInfo.areaNome} · teto atual ${fmtMoeda(teto)}`;
   const ativa = somaAreaAtiva(setorInfo.areaId, excluirLinhaId);
   const livre = teto - ativa;
   return `${setorInfo.setorNome} · ${setorInfo.areaNome} · livre ${fmtMoeda(livre)}`;
@@ -227,8 +286,8 @@ function render() {
       ${publicado ? `<span class="text-xs text-muted">publicado em ${fmtDateTime(estado.aprovadoEm)}</span>` : ''}
       ${!publicado && !encerrado ? `<button class="btn btn-primary btn-sm" onclick="onPublicarPlano()">Publicar plano</button>` : ''}
       ${!publicado && !encerrado ? `<span class="text-xs text-muted">enquanto rascunho, o plano não fica disponível para solicitação de PAI</span>` : ''}
-      ${publicado ? `<span class="text-xs text-muted">linhas da publicação ficam travadas — só dá para cancelar (se sem reserva) ou acrescentar linha nova, dentro do teto de cada área</span>` : ''}
     </div>
+    ${publicado ? renderAvisoJanela() : ''}
 
     <div style="display:grid;grid-template-columns:1fr 320px;gap:32px;align-items:start">
       <div class="form-section">
@@ -241,12 +300,15 @@ function render() {
         ` : `
         <div style="overflow-x:auto">
         <table>
-          <thead><tr><th style="width:220px">Setor</th><th>Descrição</th><th class="text-right" style="width:150px">Valor</th><th class="text-right" style="width:120px">Reservado</th><th style="width:110px"></th></tr></thead>
+          <thead><tr><th style="width:220px">Setor</th><th>Descrição</th><th class="text-right" style="width:150px">Valor</th><th class="text-right" style="width:120px">Reservado</th><th style="width:${publicado ? 170 : 110}px"></th></tr></thead>
           <tbody id="linhas-plano-tbody">${renderLinhasTabela()}</tbody>
         </table>
         </div>`}
         <div style="margin-top:12px">
-          <button class="btn btn-secondary btn-sm" id="btn-add-linha" ${estado.setoresDaEmpresa.length === 0 ? 'disabled' : ''} onclick="onAddLinha()">+ Adicionar linha</button>
+          ${publicado
+            ? `<button class="btn btn-secondary btn-sm" id="btn-add-linha" ${estado.setoresDaEmpresa.length === 0 ? 'disabled' : ''} onclick="onAbrirAjusteLinha()">+ Incluir linha</button>
+               <span class="text-xs text-muted" style="margin-left:8px">${estado.janelaAberta ? 'o teto da área acompanha a inclusão' : 'só dentro do livre do teto da área'}</span>`
+            : `<button class="btn btn-secondary btn-sm" id="btn-add-linha" ${estado.setoresDaEmpresa.length === 0 ? 'disabled' : ''} onclick="onAddLinha()">+ Adicionar linha</button>`}
         </div>
       </div>
 
@@ -257,6 +319,45 @@ function render() {
           <span>Total geral</span><span>${fmtMoeda(totalGeral)}</span>
         </div>
       </div>
+    </div>
+    ${publicado ? renderHistoricoAjustes() : ''}`;
+}
+
+// Aviso da fase do plano publicado (Etapa 23).
+function renderAvisoJanela() {
+  const [cor, fundo, texto] = estado.janelaAberta
+    ? ['var(--accent)', 'var(--accent-dim)', `Plano publicado — ajustes permitidos até ${fmtDataIso(estado.corte)}. Cada alteração exige motivo.`]
+    : ['var(--red)', 'var(--surface2)', 'Plano congelado — acréscimos somente por aumento de verba.'];
+  return `
+    <div id="aviso-janela-plano" style="border:1px solid ${cor};background:${fundo};color:${cor};border-radius:8px;padding:10px 14px;font-size:13px;font-weight:600;margin:-8px 0 20px">
+      ${texto}
+    </div>`;
+}
+
+function renderHistoricoAjustes() {
+  const ajustes = estado.ajustes;
+  return `
+    <div class="table-card" style="margin-top:24px">
+      <div class="table-header"><div class="table-title">Histórico de ajustes · ${ajustes.length}</div></div>
+      ${ajustes.length === 0 ? '<div class="empty-state" style="padding:20px"><div class="empty-desc">Nenhum ajuste depois da publicação.</div></div>' : `
+      <div style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Quando</th><th>Quem</th><th>Tipo</th><th>Linha</th><th>Campo</th><th>Antes</th><th>Depois</th><th>Motivo</th></tr></thead>
+        <tbody>
+          ${ajustes.map(a => `
+            <tr>
+              <td class="text-xs" style="white-space:nowrap">${fmtDateTime(a.feito_em)}${a.na_janela ? '' : '<div class="text-muted">após o corte</div>'}</td>
+              <td>${a.usuario?.nome || '—'}</td>
+              <td>${TIPO_AJUSTE_LABELS[a.tipo] || a.tipo}</td>
+              <td>${a.linhas_plano?.descricao || '—'}</td>
+              <td>${CAMPO_AJUSTE_LABELS[a.campo] || a.campo}</td>
+              <td class="text-muted">${fmtValorAjuste(a.campo, a.valor_antes)}</td>
+              <td>${fmtValorAjuste(a.campo, a.valor_depois)}</td>
+              <td class="text-xs">${a.motivo}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+      </div>`}
     </div>`;
 }
 
@@ -282,8 +383,9 @@ function renderResumoArea(resumo) {
       </div>`).join('');
   }
 
-  // Publicado: teto (congelado na publicação) · ativo (soma das linhas não
-  // canceladas hoje) · livre (teto − ativo) — o que sobra pra uma linha nova.
+  // Publicado: teto · ativo (soma das linhas não canceladas hoje) · livre
+  // (teto − ativo) — o que sobra pra uma linha nova. Na janela de ajuste o
+  // teto acompanha os ajustes; depois do corte, fica congelado.
   return resumo.map(r => {
     const teto = r.areaId ? (estado.tetoPorArea[r.areaId] ?? 0) : 0;
     const livre = teto - r.total;
@@ -291,7 +393,7 @@ function renderResumoArea(resumo) {
     return `
       <div style="padding-bottom:10px;margin-bottom:2px;border-bottom:1px solid var(--border)">
         <div style="font-size:13px;font-weight:600;margin-bottom:6px">${r.nome}</div>
-        <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text2)"><span>Teto</span><span>${fmtMoeda(teto)}</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text2)"><span>Teto${estado.janelaAberta ? ' (acompanha os ajustes)' : ' (congelado)'}</span><span>${fmtMoeda(teto)}</span></div>
         <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text2)"><span>Ativo</span><span>${fmtMoeda(r.total)}</span></div>
         <div style="display:flex;justify-content:space-between;font-size:12px;font-weight:600"><span>Livre</span><span style="color:${estourado ? 'var(--red)' : 'var(--green)'}">${fmtMoeda(livre)}</span></div>
       </div>`;
@@ -301,6 +403,7 @@ function renderResumoArea(resumo) {
 function renderLinhasTabela() {
   return estado.linhas.map(l => {
     const editavel = linhaEditavel(l);
+    const ajustavel = linhaAjustavel(l);
     const cancelavel = linhaCancelavel(l);
     if (l.cancelada) {
       return `
@@ -315,23 +418,36 @@ function renderLinhasTabela() {
         <td class="text-right"><span class="badge badge-danger">Cancelada</span></td>
       </tr>`;
     }
-    return `
-    <tr>
+    // Rascunho: inputs editáveis. Publicado: só leitura em texto — a edição
+    // é pelo modal "Ajustar linha" (com motivo).
+    const celulasDados = editavel ? `
       <td>
-        <select ${editavel ? '' : 'disabled'} onchange="onSetorLinhaChange('${l.id}', this.value)">
+        <select onchange="onSetorLinhaChange('${l.id}', this.value)">
           ${estado.setoresDaEmpresa.map(s => `<option value="${s.setorId}" ${s.setorId === l.setorId ? 'selected' : ''}>${s.setorNome}</option>`).join('')}
         </select>
         <div id="legenda-setor-${l.id}" class="text-xs text-muted" style="margin-top:4px">${legendaAreaSetor(l)}</div>
       </td>
-      <td><input type="text" value="${l.descricao}" placeholder="ex.: Britagem — expansão" ${editavel ? '' : 'disabled'} onchange="onDescricaoLinhaChange('${l.id}', this.value)"></td>
-      <td><input type="number" min="${l.reservado || 0}" step="0.01" value="${l.valor || ''}" placeholder="0" ${editavel ? '' : 'disabled'} onchange="onValorLinhaChange('${l.id}', this.value)"></td>
+      <td><input type="text" value="${l.descricao}" placeholder="ex.: Britagem — expansão" onchange="onDescricaoLinhaChange('${l.id}', this.value)"></td>
+      <td><input type="number" min="${l.reservado || 0}" step="0.01" value="${l.valor || ''}" placeholder="0" onchange="onValorLinhaChange('${l.id}', this.value)"></td>` : `
+      <td>
+        ${l.setorNome}
+        <div id="legenda-setor-${l.id}" class="text-xs text-muted" style="margin-top:4px">${legendaAreaSetor(estado.setoresDaEmpresa.find(s => s.setorId === l.setorId))}</div>
+      </td>
+      <td>${l.descricao || '<span class="text-muted">(sem descrição)</span>'}${l.tipo !== 'planejada' ? `<div class="text-xs text-muted">${l.tipo === 'aumento' ? 'aumento de verba' : 'devolução'}</div>` : ''}</td>
+      <td class="text-right">${fmtMoeda(l.valor)}</td>`;
+    return `
+    <tr>
+      ${celulasDados}
       <td class="text-right">${l.reservado > 0 ? `<a href="#" onclick="onVerPaisDaLinha('${l.id}');return false;" style="color:var(--accent)" title="Ver quais PAIs usam esta linha">${fmtMoeda(l.reservado)}</a>` : '<span class="text-muted">—</span>'}</td>
       <td class="text-right">
         ${estado.status === 'rascunho'
           ? `<button class="btn btn-ghost btn-sm" onclick="onRemoverLinha('${l.id}')" title="Remover">✕ Remover</button>`
-          : cancelavel
-            ? `<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="onAbrirCancelarLinha('${l.id}')" title="Cancelar linha">Cancelar</button>`
-            : `<span title="${l.reservado > 0 ? 'Linha com verba reservada' : 'Linha travada — faz parte da publicação'}">🔒</span>`}
+          : (ajustavel || cancelavel)
+            ? `<div style="display:flex;gap:4px;justify-content:flex-end">
+                ${ajustavel ? `<button class="btn btn-ghost btn-sm" onclick="onAbrirAjusteLinha('${l.id}')" title="Ajustar linha">Ajustar</button>` : ''}
+                ${cancelavel ? `<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="onAbrirCancelarLinha('${l.id}')" title="Cancelar linha">Cancelar</button>` : ''}
+              </div>`
+            : `<span title="${tituloCadeado(l)}">🔒</span>`}
       </td>
     </tr>`;
   }).join('');
@@ -377,17 +493,6 @@ async function onSetorLinhaChange(linhaId, setorId) {
   const legendaEl = document.getElementById(`legenda-setor-${linhaId}`);
   if (legendaEl) legendaEl.textContent = legendaAreaSetor(novoSetor, linhaId);
 
-  if (estado.status === 'aprovado') {
-    const teto = novoSetor?.areaId ? (estado.tetoPorArea[novoSetor.areaId] ?? 0) : Infinity;
-    const somaSemEsta = somaAreaAtiva(novoSetor?.areaId, linhaId);
-    const livre = teto - somaSemEsta;
-    if (somaSemEsta + linha.valor > teto + 1e-9) {
-      toast(`Estouraria o teto de ${novoSetor?.areaNome || 'área'} (livre ${fmtMoeda(livre)}). Reduza o valor ou solicite aumento de verba.`, 'error');
-      render();
-      return;
-    }
-  }
-
   const { error } = await sb.from('linhas_plano').update({ setor_id: setorId }).eq('id', linhaId);
   if (error) { toast('Erro ao atualizar linha: ' + error.message, 'error'); return; }
   await carregarLinhas();
@@ -411,17 +516,6 @@ async function onValorLinhaChange(linhaId, valor) {
     toast(`Não é possível reduzir abaixo do já reservado (${fmtMoeda(linha.reservado)})`, 'error');
     render();
     return;
-  }
-
-  if (estado.status === 'aprovado') {
-    const teto = linha.areaId ? (estado.tetoPorArea[linha.areaId] ?? 0) : Infinity;
-    const somaSemEsta = somaAreaAtiva(linha.areaId, linhaId);
-    const livre = teto - somaSemEsta;
-    if (somaSemEsta + novoValor > teto + 1e-9) {
-      toast(`Estouraria o teto de ${linha.areaNome || 'área'} (livre ${fmtMoeda(livre)}). Reduza o valor ou solicite aumento de verba.`, 'error');
-      render();
-      return;
-    }
   }
 
   const { error } = await sb.from('linhas_plano').update({ valor: novoValor }).eq('id', linhaId);
@@ -481,13 +575,117 @@ async function onConfirmarCancelarLinha(linhaId) {
   if (!motivo) { if (erroEl) erroEl.textContent = 'Explique o motivo do cancelamento.'; return; }
   if (erroEl) erroEl.textContent = '';
 
-  const { error } = await sb.from('linhas_plano').update({
-    cancelada: true, cancelada_motivo: motivo, cancelada_por: currentUser.id, cancelada_em: new Date().toISOString()
-  }).eq('id', linhaId);
-  if (error) { toast('Erro ao cancelar linha: ' + error.message, 'error'); return; }
+  // Via função de banco: grava o cancelamento e o registro em ajustes_plano
+  // na mesma transação (Etapa 23).
+  const { error } = await sb.rpc('plano_cancelar_linha', { p_linha_id: linhaId, p_motivo: motivo });
+  if (error) { if (erroEl) erroEl.textContent = error.message; return; }
 
   document.getElementById('modal-cancelar-linha')?.remove();
   toast('Linha cancelada');
+  await carregarLinhas();
+  render();
+}
+
+function tituloCadeado(linha) {
+  if (linha.tipo !== 'planejada') return 'Linha de aumento/devolução — gerada pelo próprio fluxo, não é ajustada aqui';
+  if (linha.reservado > 0) return 'Plano congelado e linha com verba reservada';
+  return 'Plano congelado — linha da publicação não muda mais (acréscimos somente por aumento de verba)';
+}
+
+// ═══════════════════════════════════════════════════
+// AJUSTE DE PLANO PUBLICADO (Etapa 23) — um modal só para "Ajustar linha"
+// (linhaId informado) e "Incluir linha" (sem linhaId). Motivo obrigatório.
+// ═══════════════════════════════════════════════════
+function onAbrirAjusteLinha(linhaId) {
+  const linha = linhaId ? estado.linhas.find(l => l.id === linhaId) : null;
+  if (linhaId && (!linha || !linhaAjustavel(linha))) { toast('Esta linha não pode ser ajustada.', 'error'); return; }
+  const setorAtual = linha?.setorId || estado.setoresDaEmpresa[0]?.setorId;
+  const comReserva = (linha?.reservado || 0) > 0;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'modal-ajuste-linha';
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:480px">
+      <div class="modal-header">
+        <h2>${linha ? 'Ajustar linha' : 'Incluir linha'}</h2>
+        <button class="close-btn" onclick="this.closest('.modal-overlay').remove()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+      <div class="modal-body">
+        ${comReserva ? `<div class="text-xs" style="color:var(--text2);background:var(--surface2);border-radius:6px;padding:8px 10px;margin-bottom:12px">Esta linha tem <strong>${fmtMoeda(linha.reservado)}</strong> reservados por PAIs: o valor não pode ficar abaixo disso e o setor não pode mudar.</div>` : ''}
+        <div class="field"><label>Setor</label>
+          <select id="ajuste-setor" ${comReserva ? 'disabled' : ''} onchange="onAjusteSetorChange(this.value)">
+            ${estado.setoresDaEmpresa.map(s => `<option value="${s.setorId}" ${s.setorId === setorAtual ? 'selected' : ''}>${s.setorNome}</option>`).join('')}
+          </select>
+          <div id="ajuste-legenda-setor" class="text-xs text-muted" style="margin-top:4px">${legendaAreaSetor(estado.setoresDaEmpresa.find(s => s.setorId === setorAtual), linha?.id)}</div>
+        </div>
+        <div class="field"><label>Descrição</label><input type="text" id="ajuste-descricao" value="${linha?.descricao || ''}" placeholder="ex.: Britagem — expansão"></div>
+        <div class="field"><label>Valor *</label>
+          <input type="number" min="${linha?.reservado || 0}" step="0.01" id="ajuste-valor" value="${linha ? linha.valor : ''}" placeholder="0">
+          ${linha ? `<div class="text-xs text-muted" style="margin-top:4px">atual: ${fmtMoeda(linha.valor)}${comReserva ? ` · reservado: ${fmtMoeda(linha.reservado)}` : ''}</div>` : ''}
+        </div>
+        <div class="field"><label>Motivo *</label><textarea id="ajuste-motivo" rows="3" placeholder="Por que este ajuste está sendo feito?"></textarea></div>
+        <div id="ajuste-erro" class="text-xs" style="color:var(--red);min-height:16px"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Voltar</button>
+        <button class="btn btn-primary" id="btn-confirmar-ajuste" onclick="onConfirmarAjusteLinha(${linha ? `'${linha.id}'` : 'null'})">${linha ? 'Salvar ajuste' : 'Incluir linha'}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+function onAjusteSetorChange(setorId) {
+  const el = document.getElementById('ajuste-legenda-setor');
+  if (el) el.textContent = legendaAreaSetor(estado.setoresDaEmpresa.find(s => s.setorId === setorId));
+}
+
+// Mesmas proteções que o banco aplica (triggers de linhas_plano) — aqui só
+// para a mensagem sair na hora. Retorna o texto do erro ou null.
+function validarAjuste(linha, setorId, descricao, valor, motivo) {
+  if (!motivo) return 'Informe o motivo do ajuste — toda alteração de plano publicado exige motivo.';
+  if (!(valor > 0)) return 'Informe um valor maior que zero.';
+  const reservado = linha?.reservado || 0;
+  if (valor < reservado - 1e-9) return `Não é possível reduzir abaixo do já reservado nesta linha (${fmtMoeda(reservado)}).`;
+  if (linha && reservado > 0 && setorId !== linha.setorId) return `Linha com reserva (${fmtMoeda(reservado)}) não pode mudar de setor/área.`;
+  if (linha && setorId === linha.setorId && descricao === (linha.descricao || '') && Math.abs(valor - linha.valor) < 0.005) return 'Nada foi alterado.';
+
+  const setor = estado.setoresDaEmpresa.find(s => s.setorId === setorId);
+  const areaId = setor?.areaId;
+  if (!areaId) return null; // setor sem área vinculada: sem teto a conferir
+
+  const somaDepois = somaAreaAtiva(areaId, linha?.id) + valor;
+  if (estado.janelaAberta) {
+    const reservadoArea = estado.linhas.filter(l => l.areaId === areaId && !l.cancelada && l.id !== linha?.id).reduce((a, l) => a + l.reservado, 0) + reservado;
+    if (somaDepois < reservadoArea - 1e-9) return `O teto de ${setor.areaNome} ficaria em ${fmtMoeda(somaDepois)}, abaixo do já reservado na área (${fmtMoeda(reservadoArea)}).`;
+  } else {
+    const teto = estado.tetoPorArea[areaId] ?? 0;
+    if (somaDepois > teto + 1e-9) return `Plano congelado: estouraria o teto de ${setor.areaNome} (livre ${fmtMoeda(teto - somaAreaAtiva(areaId, linha?.id))}) — acréscimos somente por aumento de verba.`;
+  }
+  return null;
+}
+
+async function onConfirmarAjusteLinha(linhaId) {
+  const linha = linhaId ? estado.linhas.find(l => l.id === linhaId) : null;
+  const erroEl = document.getElementById('ajuste-erro');
+  const setorId = linha && linha.reservado > 0 ? linha.setorId : document.getElementById('ajuste-setor').value;
+  const descricao = document.getElementById('ajuste-descricao').value.trim();
+  const valor = numOrZero(document.getElementById('ajuste-valor').value);
+  const motivo = document.getElementById('ajuste-motivo').value.trim();
+
+  const erro = validarAjuste(linha, setorId, descricao, valor, motivo);
+  if (erro) { erroEl.textContent = erro; return; }
+  erroEl.textContent = '';
+
+  const btn = document.getElementById('btn-confirmar-ajuste');
+  if (btn) btn.disabled = true;
+  const { error } = linha
+    ? await sb.rpc('plano_alterar_linha', { p_linha_id: linha.id, p_setor_id: setorId, p_descricao: descricao, p_valor: valor, p_motivo: motivo })
+    : await sb.rpc('plano_incluir_linha', { p_plano_id: estado.planoId, p_setor_id: setorId, p_descricao: descricao, p_valor: valor, p_motivo: motivo });
+  if (error) { erroEl.textContent = error.message; if (btn) btn.disabled = false; return; }
+
+  document.getElementById('modal-ajuste-linha')?.remove();
+  toast(linha ? 'Ajuste registrado' : 'Linha incluída');
   await carregarLinhas();
   render();
 }
@@ -578,5 +776,6 @@ async function onVerPaisDaLinha(linhaId) {
 Object.assign(window, {
   renderPlanoInvestimento, onEmpresaPlanoChange, onAnoPlanoChange, onAddLinha,
   onSetorLinhaChange, onDescricaoLinhaChange, onValorLinhaChange, onRemoverLinha,
-  onAbrirCancelarLinha, onConfirmarCancelarLinha, onPublicarPlano, onVerPaisDaLinha
+  onAbrirCancelarLinha, onConfirmarCancelarLinha, onPublicarPlano, onVerPaisDaLinha,
+  onAbrirAjusteLinha, onAjusteSetorChange, onConfirmarAjusteLinha
 });
