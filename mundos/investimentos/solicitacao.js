@@ -55,6 +55,14 @@ async function carregarTiposInvestimento() {
   return data || [];
 }
 
+// Lista fixa da composição (Etapa 22) — só as ativas, na ordem cadastrada
+// em Administração → Unidades e Setores → "Composição do Investimento".
+async function carregarCategoriasComposicao() {
+  const { data, error } = await sb.from('categorias_composicao').select('id,nome').eq('ativo', true).order('ordem');
+  if (error) { console.error('Erro ao carregar categorias da composição:', error); return []; }
+  return data || [];
+}
+
 // ═══════════════════════════════════════════════════
 // ABERTURA DA TELA
 // ═══════════════════════════════════════════════════
@@ -64,7 +72,9 @@ export async function abrirNovoPai(paiId) {
   const page = document.getElementById('page-content');
   page.innerHTML = '<div class="loading"><div class="spinner"></div> Carregando...</div>';
 
-  const [escopos, tiposInvestimento] = await Promise.all([resolverEscoposSolicitante(), carregarTiposInvestimento()]);
+  const [escopos, tiposInvestimento, categoriasComposicao] = await Promise.all([
+    resolverEscoposSolicitante(), carregarTiposInvestimento(), carregarCategoriasComposicao()
+  ]);
   if (!escopos.length) {
     page.innerHTML = `
       <div class="empty-state">
@@ -84,13 +94,14 @@ export async function abrirNovoPai(paiId) {
     escopoIdx: 0,
     escopos,
     tiposInvestimento,
+    categoriasComposicao,
     ano: anoVigente(),
     tipo: tiposInvestimento[0]?.nome || '',
     valorTotal: 0,
     titulo: '',
     descricao: '',
     linhas: [],
-    itens: [{ aplicacao: '', valor: 0 }],
+    itens: [{ categoriaId: '', valor: 0 }],
     anexos: { a3: null, viabilidade: null, orcamento: null },
     anexosExistentes: { a3: null, viabilidade: null, orcamento: null }, // já enviados num ciclo anterior (reenvio após devolução)
     vinculosIniciais: {}, // linha_id -> valor, de um ciclo anterior (reenvio após devolução)
@@ -117,7 +128,11 @@ export async function abrirNovoPai(paiId) {
           sb.from('vinculos_verba').select('*').eq('pai_id', pai.id),
           sb.from('anexos_pai').select('*').eq('pai_id', pai.id)
         ]);
-        if (itens?.length) estado.itens = itens.map(i => ({ aplicacao: i.aplicacao, valor: i.valor }));
+        // Item antigo (texto livre, sem categoria_id) ou de categoria hoje
+        // inativa volta sem categoria — o solicitante escolhe uma da lista
+        // antes de reenviar (o checklist bloqueia até lá).
+        const ativas = new Set(categoriasComposicao.map(cat => cat.id));
+        if (itens?.length) estado.itens = itens.map(i => ({ categoriaId: ativas.has(i.categoria_id) ? i.categoria_id : '', valor: i.valor }));
         (vinculos || []).forEach(v => { estado.vinculosIniciais[v.linha_id] = v.valor; });
         (anexos || []).forEach(a => { if (a.tipo in estado.anexosExistentes) estado.anexosExistentes[a.tipo] = a; });
       }
@@ -198,13 +213,15 @@ function calcular() {
     : composicaoBate ? `Composição ${fmtMoeda(totalComposicao)} = valor total ✓`
     : `Composição ${fmtMoeda(totalComposicao)} ≠ valor total ${fmtMoeda(valorTotal)}`;
 
-  const itensOk = estado.itens.length > 0 && estado.itens.every(i => i.aplicacao.trim() && numOrZero(i.valor) > 0);
+  const categoriasUsadas = estado.itens.map(i => i.categoriaId).filter(Boolean);
+  const itensOk = estado.itens.length > 0 && estado.itens.every(i => i.categoriaId && numOrZero(i.valor) > 0)
+    && new Set(categoriasUsadas).size === categoriasUsadas.length;
   const temAnexos = !!((estado.anexos.a3 || estado.anexosExistentes.a3) && (estado.anexos.viabilidade || estado.anexosExistentes.viabilidade));
 
   const checks = [
     { ok: temValor, texto: 'Valor total informado' },
     { ok: linhasBatem, texto: linhasTexto },
-    { ok: composicaoBate && itensOk, texto: !itensOk && temValor ? 'Todos os itens precisam de aplicação e valor' : composicaoTexto },
+    { ok: composicaoBate && itensOk, texto: !itensOk && temValor ? 'Todos os itens precisam de categoria e valor' : composicaoTexto },
     { ok: !semSaldo, texto: semSaldo ? `Saldo insuficiente — faltam ${fmtMoeda(faltam)}` : 'Saldo da área suficiente' },
     { ok: temAnexos, texto: 'A3 e estudo de viabilidade anexados' },
   ];
@@ -310,14 +327,16 @@ function render() {
             <div class="form-section-title" style="margin-bottom:0">Composição do investimento · destino do dinheiro</div>
             <div id="composicao-status" class="text-sm" style="color:${c.composicaoBate ? 'var(--green)' : 'var(--red)'}">${c.composicaoTexto}</div>
           </div>
-          <div class="text-xs text-muted" style="margin-top:-4px;margin-bottom:8px">mão de obra, peças, maquinário etc. — como o valor será gasto</div>
+          <div class="text-xs text-muted" style="margin-top:-4px;margin-bottom:8px">distribua o valor entre as categorias da lista (cada categoria uma vez) — como o valor será gasto</div>
+          ${estado.categoriasComposicao.length === 0 ? `
+          <div class="text-xs" style="color:var(--red);margin-bottom:8px">Nenhuma categoria de composição ativa — fale com o administrador.</div>` : ''}
           <div style="overflow-x:auto">
           <table>
-            <thead><tr><th style="width:36px">#</th><th>Aplicação</th><th class="text-right" style="width:160px">Valor</th><th style="width:36px"></th></tr></thead>
+            <thead><tr><th style="width:36px">#</th><th>Categoria</th><th class="text-right" style="width:160px">Valor</th><th style="width:36px"></th></tr></thead>
             <tbody id="itens-tbody">${renderLinhasItens()}</tbody>
           </table>
           </div>
-          <div style="margin-top:10px"><button class="btn btn-secondary btn-sm" onclick="onAddItem()">+ Adicionar item</button></div>
+          <div style="margin-top:10px"><button class="btn btn-secondary btn-sm" id="btn-add-item" onclick="onAddItem()" ${todasCategoriasUsadas() ? 'disabled' : ''}>+ Adicionar item</button></div>
           <div class="text-xs text-muted" style="margin-top:8px">O número do bem de cada item é preenchido no encerramento, pela Controladoria Contábil.</div>
         </div>
 
@@ -385,14 +404,31 @@ function renderLinhasBolo() {
     </tr>`).join('');
 }
 
+// Cada categoria aparece no máximo uma vez por PAI: o select de cada linha
+// só oferece as categorias que nenhuma OUTRA linha escolheu.
 function renderLinhasItens() {
-  return estado.itens.map((it, i) => `
+  return estado.itens.map((it, i) => {
+    const usadasPorOutras = new Set(estado.itens.filter((_, j) => j !== i).map(o => o.categoriaId).filter(Boolean));
+    const opcoes = estado.categoriasComposicao.filter(cat => !usadasPorOutras.has(cat.id));
+    return `
     <tr>
       <td class="text-muted">${i + 1}</td>
-      <td><input type="text" id="item-aplicacao-${i}" value="${it.aplicacao}" oninput="onItemAplicacaoInput(${i}, this.value)" placeholder="ex.: mão de obra, peça, maquinário..."></td>
+      <td><select id="item-categoria-${i}" onchange="onItemCategoriaChange(${i}, this.value)">
+        <option value="" ${!it.categoriaId ? 'selected' : ''}>Selecione a categoria…</option>
+        ${opcoes.map(cat => `<option value="${cat.id}" ${it.categoriaId === cat.id ? 'selected' : ''}>${cat.nome}</option>`).join('')}
+      </select></td>
       <td><input type="number" min="0" step="0.01" id="item-valor-${i}" value="${it.valor || ''}" placeholder="0" oninput="onItemValorInput(${i}, this.value)"></td>
       <td><button class="btn btn-ghost btn-sm" onclick="onRemoveItem(${i})" title="Remover">✕</button></td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
+}
+
+function todasCategoriasUsadas() { return estado.itens.length >= estado.categoriasComposicao.length; }
+
+function renderItensComposicao() {
+  document.getElementById('itens-tbody').innerHTML = renderLinhasItens();
+  const btnAdd = document.getElementById('btn-add-item');
+  if (btnAdd) btnAdd.disabled = todasCategoriasUsadas();
 }
 
 function renderBotaoAnexo(chave) {
@@ -480,7 +516,9 @@ function onValorTotalInput(valor) { estado.valorTotal = numOrZero(valor); atuali
 function onTituloInput(valor) { estado.titulo = valor; atualizar(); }
 function onDescricaoInput(valor) { estado.descricao = valor; atualizar(); }
 function onLinhaUsarInput(i, valor) { estado.linhas[i].usar = numOrZero(valor); atualizar(); }
-function onItemAplicacaoInput(i, valor) { estado.itens[i].aplicacao = valor; atualizar(); }
+// Troca de categoria re-renderiza as linhas: as outras linhas precisam
+// ganhar a categoria liberada e perder a recém-escolhida.
+function onItemCategoriaChange(i, valor) { estado.itens[i].categoriaId = valor; renderItensComposicao(); atualizar(); }
 function onItemValorInput(i, valor) { estado.itens[i].valor = numOrZero(valor); atualizar(); }
 
 function onSolicitarAumentoVerba() {
@@ -493,13 +531,14 @@ function onSolicitarAumentoVerba() {
 }
 
 function onAddItem() {
-  estado.itens.push({ aplicacao: '', valor: 0 });
-  document.getElementById('itens-tbody').innerHTML = renderLinhasItens();
+  if (todasCategoriasUsadas()) return;
+  estado.itens.push({ categoriaId: '', valor: 0 });
+  renderItensComposicao();
   atualizar();
 }
 function onRemoveItem(i) {
   estado.itens.splice(i, 1);
-  document.getElementById('itens-tbody').innerHTML = renderLinhasItens();
+  renderItensComposicao();
   atualizar();
 }
 
@@ -595,7 +634,12 @@ async function onEnviarPai() {
   const { error: erroVinculos } = await sb.from('vinculos_verba').insert(vinculos);
   if (erroVinculos) { toast('PAI criado, mas houve erro ao vincular verba: ' + erroVinculos.message, 'error'); return; }
 
-  const itens = estado.itens.map((it, idx) => ({ pai_id: paiId, aplicacao: it.aplicacao, valor: it.valor, ordem: idx + 1 }));
+  // aplicacao continua gravada (com o nome da categoria) — PDF, encerramento
+  // e relatórios antigos a leem; categoria_id é o que vale para o MRP.
+  const nomeCategoria = Object.fromEntries(estado.categoriasComposicao.map(cat => [cat.id, cat.nome]));
+  const itens = estado.itens.map((it, idx) => ({
+    pai_id: paiId, categoria_id: it.categoriaId, aplicacao: nomeCategoria[it.categoriaId], valor: it.valor, ordem: idx + 1
+  }));
   const { error: erroItens } = await sb.from('itens_pai').insert(itens);
   if (erroItens) toast('PAI criado, mas houve erro ao gravar itens: ' + erroItens.message, 'error');
 
@@ -631,6 +675,6 @@ async function onEnviarPai() {
 // pois módulos ES não expõem suas funções no escopo global automaticamente.
 Object.assign(window, {
   abrirNovoPai, onEscopoChange, onAnoChange, onTipoChange, onValorTotalInput, onTituloInput, onDescricaoInput,
-  onLinhaUsarInput, onItemAplicacaoInput, onItemValorInput, onAddItem, onRemoveItem,
+  onLinhaUsarInput, onItemCategoriaChange, onItemValorInput, onAddItem, onRemoveItem,
   onAnexoSelecionado, onSolicitarAumentoVerba, onSalvarRascunho, onEnviarPai
 });

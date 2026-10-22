@@ -200,7 +200,7 @@ export async function abrirDetalhePai(paiId, etapaAtual) {
 
       <div class="form-section">
         <div class="form-section-title">Composição</div>
-        <table><thead><tr><th>Aplicação</th><th>Nº do bem</th><th class="text-right">Valor</th></tr></thead><tbody>
+        <table><thead><tr><th>Categoria</th><th>Nº do bem</th><th class="text-right">Valor</th></tr></thead><tbody>
           ${itens.map(i => `<tr><td>${i.aplicacao}</td><td>${i.numero_bem || '—'}</td><td class="text-right">${fmtMoeda(i.valor)}</td></tr>`).join('')}
         </tbody></table>
       </div>

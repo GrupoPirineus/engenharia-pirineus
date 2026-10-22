@@ -8,7 +8,7 @@ import { toast } from '../shared/ui.js';
 // área de cada linha empresa_setores é feito na aba "Vínculo Setor → Área".
 // ═══════════════════════════════════════════════════
 
-let abaAtual = 'unidades'; // 'unidades' | 'setores' | 'setores-unidade' | 'tipos-investimento' | 'tipos-servico'
+let abaAtual = 'unidades'; // 'unidades' | 'setores' | 'setores-unidade' | 'tipos-investimento' | 'composicao-investimento' | 'tipos-servico'
 
 export async function renderUnidadesSetores(aba) {
   if (aba) abaAtual = aba;
@@ -20,6 +20,7 @@ export async function renderUnidadesSetores(aba) {
       <button class="btn btn-sm ${abaAtual === 'setores' ? 'btn-primary' : 'btn-secondary'}" onclick="renderUnidadesSetores('setores')">Setores</button>
       <button class="btn btn-sm ${abaAtual === 'setores-unidade' ? 'btn-primary' : 'btn-secondary'}" onclick="renderUnidadesSetores('setores-unidade')">Setores por unidade</button>
       <button class="btn btn-sm ${abaAtual === 'tipos-investimento' ? 'btn-primary' : 'btn-secondary'}" onclick="renderUnidadesSetores('tipos-investimento')">Tipos de Investimento</button>
+      <button class="btn btn-sm ${abaAtual === 'composicao-investimento' ? 'btn-primary' : 'btn-secondary'}" onclick="renderUnidadesSetores('composicao-investimento')">Composição do Investimento</button>
       <button class="btn btn-sm ${abaAtual === 'tipos-servico' ? 'btn-primary' : 'btn-secondary'}" onclick="renderUnidadesSetores('tipos-servico')">Tipos de Serviço</button>
     </div>
     <div id="unidades-conteudo"><div class="loading"><div class="spinner"></div> Carregando...</div></div>`;
@@ -28,6 +29,7 @@ export async function renderUnidadesSetores(aba) {
   else if (abaAtual === 'setores') await montarAbaSetoresGlobais();
   else if (abaAtual === 'setores-unidade') await montarAbaSetoresPorUnidade();
   else if (abaAtual === 'tipos-investimento') await montarAbaTiposInvestimento();
+  else if (abaAtual === 'composicao-investimento') await montarAbaCategoriasComposicao();
   else await montarAbaTiposServico();
 }
 
@@ -399,6 +401,87 @@ export async function alternarAtivoTipoInvestimento(id, ativoAtual) {
 }
 
 // ═══════════════════════════════════════════════════
+// ABA · COMPOSIÇÃO DO INVESTIMENTO (categorias_composicao — Etapa 22).
+// Lista fixa usada no select do bloco Composição do Novo PAI; as
+// categorias viram filtros de centro de custo no MRP. Mesmo CRUD de Tipos
+// de Investimento, acima. Sem opção "Outros", de propósito.
+// ═══════════════════════════════════════════════════
+async function montarAbaCategoriasComposicao() {
+  const conteudo = document.getElementById('unidades-conteudo');
+  const { data: categorias, error } = await sb.from('categorias_composicao').select('*').order('ordem');
+  if (error) { toast('Erro ao carregar categorias da composição: ' + error.message, 'error'); return; }
+
+  conteudo.innerHTML = `
+    <div class="table-card">
+      <div class="table-header">
+        <div class="table-title">Composição do Investimento · ${(categorias || []).length}</div>
+        <button class="btn btn-primary btn-sm" onclick="abrirFormCategoriaComposicao()">+ Nova categoria</button>
+      </div>
+      <div class="text-xs text-muted" style="padding:0 16px 8px">Categorias do bloco Composição do Novo PAI — viram filtros de centro de custo no MRP. Só as ativas aparecem no select, nesta ordem.</div>
+      <div style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Ordem</th><th>Nome</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+          ${(categorias || []).map(c => `
+            <tr onclick="abrirFormCategoriaComposicao('${c.id}')">
+              <td class="text-muted">${c.ordem ?? 0}</td>
+              <td>${c.nome}</td>
+              <td>${c.ativo ? '<span class="badge badge-success">Ativa</span>' : '<span class="badge badge-danger">Inativa</span>'}</td>
+              <td class="text-right"><a href="#" onclick="event.stopPropagation();alternarAtivoCategoriaComposicao('${c.id}',${c.ativo});return false;" style="color:var(--accent);font-size:12px">${c.ativo ? 'Desativar' : 'Ativar'}</a></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+      </div>
+    </div>`;
+}
+
+export async function abrirFormCategoriaComposicao(id) {
+  const existente = id ? await sb.from('categorias_composicao').select('*').eq('id', id).single().then(r => r.data) : null;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'modal-categoria-composicao';
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:420px">
+      <div class="modal-header">
+        <h2>${id ? 'Editar categoria da composição' : 'Nova categoria da composição'}</h2>
+        <button class="close-btn" onclick="document.getElementById('modal-categoria-composicao').remove()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+      <div class="modal-body">
+        <div class="field"><label>Nome *</label><input type="text" id="categoria-composicao-nome" value="${existente?.nome || ''}" placeholder="ex.: Materiais para obra civil"></div>
+        <div class="field"><label>Ordem</label><input type="number" id="categoria-composicao-ordem" value="${existente?.ordem ?? 0}"></div>
+        ${id ? '<div class="text-xs text-muted">Renomear não altera PAIs já enviados — eles guardam o nome da categoria no momento do envio.</div>' : ''}
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="document.getElementById('modal-categoria-composicao').remove()">Cancelar</button>
+        <button class="btn btn-primary" onclick="salvarCategoriaComposicao(${id ? `'${id}'` : 'null'})">Salvar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  setTimeout(() => document.getElementById('categoria-composicao-nome')?.focus(), 100);
+}
+
+export async function salvarCategoriaComposicao(id) {
+  const nome = document.getElementById('categoria-composicao-nome').value.trim();
+  if (!nome) { toast('Nome é obrigatório', 'error'); return; }
+  const payload = { nome, ordem: parseInt(document.getElementById('categoria-composicao-ordem').value, 10) || 0 };
+  const { error } = id
+    ? await sb.from('categorias_composicao').update(payload).eq('id', id)
+    : await sb.from('categorias_composicao').insert(payload);
+  if (error) { toast('Erro ao salvar categoria: ' + error.message, 'error'); return; }
+  document.getElementById('modal-categoria-composicao')?.remove();
+  toast('Categoria salva');
+  montarAbaCategoriasComposicao();
+}
+
+export async function alternarAtivoCategoriaComposicao(id, ativoAtual) {
+  const { error } = await sb.from('categorias_composicao').update({ ativo: !ativoAtual }).eq('id', id);
+  if (error) { toast('Erro: ' + error.message, 'error'); return; }
+  toast(ativoAtual ? 'Categoria desativada' : 'Categoria ativada');
+  montarAbaCategoriasComposicao();
+}
+
+// ═══════════════════════════════════════════════════
 // ABA · TIPOS DE SERVIÇO (cadastro global, usado no select da Abertura de
 // Chamado — mundo Chamados). Mesmo CRUD de Tipos de Investimento, acima —
 // centralizado aqui desde a Etapa 18 (antes vivia em Configurações, dentro
@@ -485,5 +568,6 @@ Object.assign(window, {
   selecionarEmpresaSetores, clicouSetorNaUnidade,
   marcarTodosSetoresDaUnidade, desmarcarTodosSetoresDaUnidade,
   abrirFormTipoInvestimento, salvarTipoInvestimento, alternarAtivoTipoInvestimento,
+  abrirFormCategoriaComposicao, salvarCategoriaComposicao, alternarAtivoCategoriaComposicao,
   abrirFormTipoServico, salvarTipoServico, alternarAtivoTipoServico
 });

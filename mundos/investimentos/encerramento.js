@@ -114,7 +114,7 @@ function renderModalEncerramento(pai) {
 
       <div class="form-section">
         <div class="form-section-title">Número do bem por item *</div>
-        <table><thead><tr><th>Aplicação</th><th class="text-right">Valor</th><th style="width:180px">Nº do bem</th></tr></thead><tbody>
+        <table><thead><tr><th>Categoria</th><th class="text-right">Valor</th><th style="width:180px">Nº do bem</th></tr></thead><tbody>
           ${estadoEncerramento.itens.map((it, i) => `
             <tr>
               <td>${it.aplicacao}</td>

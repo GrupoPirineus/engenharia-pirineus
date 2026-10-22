@@ -19,9 +19,9 @@ import { resolverEscoposSolicitante } from './solicitacao.js';
 //
 // Filtros (ano, empresa, área, status, tipo) recarregam os dados; trocar
 // de aba só troca a visão sobre os dados já carregados (estado.dados).
-// Exportação (XLSX/PDF) sempre gera as 4 tabelas (Consolidado por área,
-// Consolidado por unidade, PAIs, Auditoria) no recorte atual, independente
-// de qual aba estiver aberta no momento do clique.
+// Exportação (XLSX/PDF) sempre gera as 5 tabelas (Consolidado por área,
+// Consolidado por unidade, Por categoria de composição, PAIs, Auditoria)
+// no recorte atual, independente de qual aba estiver aberta no clique.
 // ═══════════════════════════════════════════════════
 
 const PAPEIS_ALCADA_AMPLA = ['controladoria_op', 'inv_aprovador', 'diretor', 'diretor_ceo', 'controladoria_contabil'];
@@ -57,11 +57,14 @@ export async function renderRelatorios() {
 
   const empresaIdsEscopo = amplo ? null : [...new Set(escoposRestritos.map(e => e.empresaId))];
 
-  const [{ data: empresasTodas }, { data: planos }, { data: tiposInvestimento }, { data: areasTodas }] = await Promise.all([
+  // categorias_composicao: todas (inclusive inativas) — PAIs antigos podem
+  // usar uma categoria desativada depois e ela ainda precisa de nome/ordem.
+  const [{ data: empresasTodas }, { data: planos }, { data: tiposInvestimento }, { data: areasTodas }, { data: categoriasComposicao }] = await Promise.all([
     sb.from('empresas').select('id,nome').eq('ativo', true).order('nome'),
     sb.from('planos_investimento').select('ano_calendario, empresa_id').order('ano_calendario'),
     sb.from('tipos_investimento').select('id,nome').eq('ativo', true).order('ordem'),
-    sb.from('areas').select('id,nome').eq('ativa', true).order('ordem')
+    sb.from('areas').select('id,nome').eq('ativa', true).order('ordem'),
+    sb.from('categorias_composicao').select('id,nome,ordem').order('ordem')
   ]);
 
   const empresasEscopo = amplo ? (empresasTodas || []) : (empresasTodas || []).filter(e => empresaIdsEscopo.includes(e.id));
@@ -82,6 +85,7 @@ export async function renderRelatorios() {
   estado = {
     amplo, empresasEscopo, areasEscopo, areaIdsRestritos,
     tiposInvestimento: tiposInvestimento || [],
+    categoriasComposicao: categoriasComposicao || [],
     anosDisponiveis, ano: anoDefault, aba: 'consolidado',
     filtros: { empresaIds: [], areaIds: [], statusList: [], tipos: [] },
     dados: null
@@ -110,7 +114,7 @@ function areaIdsEfetivos() {
 async function carregarDados() {
   const empresaIds = empresaIdsEfetivos();
   const areaIds = areaIdsEfetivos();
-  if (!empresaIds.length) return { saldos: [], realizados: [], pais: [], devolucaoLinhas: [], bensPorPai: {} };
+  if (!empresaIds.length) return { saldos: [], realizados: [], pais: [], devolucaoLinhas: [], bensPorPai: {}, itens: [] };
 
   let saldosQuery = sb.from('saldo_areas').select('*').eq('ano_calendario', estado.ano).in('empresa_id', empresaIds);
   let realizadosQuery = sb.from('realizado_por_area').select('*').eq('ano_calendario', estado.ano).in('empresa_id', empresaIds);
@@ -140,14 +144,20 @@ async function carregarDados() {
   }));
   if (areaIds) devolucaoFiltrada = devolucaoFiltrada.filter(l => l._area && areaIds.includes(l._area.id));
 
-  const encerrados = paisFiltrados.filter(p => p.status === 'encerrado');
-  const { data: itens } = encerrados.length
-    ? await sb.from('itens_pai').select('pai_id,numero_bem').in('pai_id', encerrados.map(p => p.id))
+  // Itens de todos os PAIs do recorte: valor/categoria alimentam a visão
+  // "Por categoria de composição" (Etapa 22); numero_bem dos encerrados
+  // alimenta a Auditoria.
+  const { data: itens } = paisFiltrados.length
+    ? await sb.from('itens_pai').select('pai_id,numero_bem,valor,categoria_id').in('pai_id', paisFiltrados.map(p => p.id))
     : { data: [] };
+  const encerradosIds = new Set(paisFiltrados.filter(p => p.status === 'encerrado').map(p => p.id));
   const bensPorPai = {};
-  (itens || []).forEach(i => { if (!i.numero_bem) return; (bensPorPai[i.pai_id] = bensPorPai[i.pai_id] || []).push(i.numero_bem); });
+  (itens || []).forEach(i => {
+    if (!i.numero_bem || !encerradosIds.has(i.pai_id)) return;
+    (bensPorPai[i.pai_id] = bensPorPai[i.pai_id] || []).push(i.numero_bem);
+  });
 
-  return { saldos: saldos || [], realizados: realizados || [], pais: paisFiltrados, devolucaoLinhas: devolucaoFiltrada, bensPorPai };
+  return { saldos: saldos || [], realizados: realizados || [], pais: paisFiltrados, devolucaoLinhas: devolucaoFiltrada, bensPorPai, itens: itens || [] };
 }
 
 // ═══════════════════════════════════════════════════
@@ -195,6 +205,27 @@ function agruparPorUnidade(dados) {
   });
   return mapa;
 }
+
+// Soma do valor dos itens por categoria da composição, na ordem cadastrada.
+// Itens anteriores à Etapa 22 (sem categoria_id) caem num grupo próprio, no fim.
+const SEM_CATEGORIA = '__sem_categoria__';
+function agruparPorCategoria(dados) {
+  const mapa = {};
+  dados.itens.forEach(i => {
+    const chave = i.categoria_id || SEM_CATEGORIA;
+    mapa[chave] = mapa[chave] || { valor: 0, pais: new Set() };
+    mapa[chave].valor += numOrZero(i.valor);
+    mapa[chave].pais.add(i.pai_id);
+  });
+  const total = Object.values(mapa).reduce((a, g) => a + g.valor, 0);
+  const linha = (nome, g) => ({ nome, qtdPais: g.pais.size, valor: g.valor, pct: total ? (g.valor / total) * 100 : 0 });
+
+  const linhas = estado.categoriasComposicao.filter(c => mapa[c.id]).map(c => linha(c.nome, mapa[c.id]));
+  if (mapa[SEM_CATEGORIA]) linhas.push(linha('Sem categoria (itens anteriores à lista fixa)', mapa[SEM_CATEGORIA]));
+  return { linhas, total };
+}
+
+function fmtPct(n) { return n.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%'; }
 
 function nomeEmpresaPorId(id) { return estado.empresasEscopo.find(e => e.id === id)?.nome || '—'; }
 function nomeAreaPorId(id) { return estado.areasEscopo.find(a => a.id === id)?.nome || '—'; }
@@ -322,9 +353,36 @@ function renderAbaConsolidado(dados) {
       <div class="table-header"><div class="table-title">Consolidado por área</div></div>
       ${renderTabelaConsolidado(porArea, 'Área')}
     </div>
-    <div class="table-card">
+    <div class="table-card" style="margin-bottom:20px">
       <div class="table-header"><div class="table-title">Consolidado por unidade</div></div>
       ${renderTabelaConsolidado(porUnidade, 'Unidade')}
+    </div>
+    <div class="table-card">
+      <div class="table-header"><div class="table-title">Por categoria de composição</div></div>
+      <div class="text-xs text-muted" style="padding:0 16px 8px">Soma da composição dos PAIs do recorte (ano + filtros acima), por categoria.</div>
+      ${renderTabelaCategorias(agruparPorCategoria(dados))}
+    </div>`;
+}
+
+function renderTabelaCategorias({ linhas, total }) {
+  if (!linhas.length) return telaVaziaTabela();
+  return `
+    <div style="overflow-x:auto">
+    <table>
+      <thead><tr><th>Categoria</th><th class="text-right">Nº de PAIs</th><th class="text-right">Valor</th><th class="text-right">% do total</th></tr></thead>
+      <tbody>
+        ${linhas.map(l => `
+          <tr>
+            <td>${l.nome}</td>
+            <td class="text-right">${l.qtdPais}</td>
+            <td class="text-right">${fmtMoeda(l.valor)}</td>
+            <td class="text-right">${fmtPct(l.pct)}</td>
+          </tr>`).join('')}
+        <tr style="font-weight:600">
+          <td>Total</td><td></td><td class="text-right">${fmtMoeda(total)}</td><td class="text-right">${fmtPct(100)}</td>
+        </tr>
+      </tbody>
+    </table>
     </div>`;
 }
 
@@ -388,7 +446,7 @@ function renderAbaAuditoria(dados) {
 }
 
 // ═══════════════════════════════════════════════════
-// EXPORTAÇÃO — sempre as 4 tabelas do recorte atual (ano + filtros),
+// EXPORTAÇÃO — sempre as 5 tabelas do recorte atual (ano + filtros),
 // independente da aba aberta no momento do clique.
 // ═══════════════════════════════════════════════════
 function resumoFiltrosTexto() {
@@ -424,16 +482,23 @@ function montarLinhasExportacao(dados) {
       'Encerrado em': p.encerrado_em ? fmtDate(p.encerrado_em) : '—'
     };
   });
-  return { porArea, porUnidade, paisLinhas, auditoriaLinhas };
+  const { linhas: linhasCategoria, total: totalCategorias } = agruparPorCategoria(dados);
+  const porCategoria = linhasCategoria.length
+    ? [...linhasCategoria, { nome: 'Total', qtdPais: null, valor: totalCategorias, pct: 100 }].map(l => ({
+      Categoria: l.nome, 'Nº de PAIs': l.qtdPais, Valor: l.valor, '% do total': Math.round(l.pct * 10) / 10
+    }))
+    : [];
+  return { porArea, porUnidade, porCategoria, paisLinhas, auditoriaLinhas };
 }
 
 export function exportarRelatorioXlsx() {
   if (!estado?.dados) return;
   if (typeof XLSX === 'undefined') { toast('Biblioteca de exportação (XLSX) não carregou — verifique sua conexão.', 'error'); return; }
-  const { porArea, porUnidade, paisLinhas, auditoriaLinhas } = montarLinhasExportacao(estado.dados);
+  const { porArea, porUnidade, porCategoria, paisLinhas, auditoriaLinhas } = montarLinhasExportacao(estado.dados);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(porArea.length ? porArea : [{ Área: 'Sem dados para este recorte' }]), 'Consolidado - Área');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(porUnidade.length ? porUnidade : [{ Unidade: 'Sem dados para este recorte' }]), 'Consolidado - Unidade');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(porCategoria.length ? porCategoria : [{ Categoria: 'Sem dados para este recorte' }]), 'Por categoria de composição');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(paisLinhas.length ? paisLinhas : [{ Número: 'Sem dados para este recorte' }]), 'PAIs');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(auditoriaLinhas.length ? auditoriaLinhas : [{ Número: 'Sem dados para este recorte' }]), 'Auditoria de encerramentos');
   XLSX.writeFile(wb, `relatorio-investimentos-${estado.ano}-${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -495,7 +560,12 @@ function tabelaHtmlExport(titulo, colunas, linhas) {
 
 export function exportarRelatorioPdf() {
   if (!estado?.dados) return;
-  const { porArea, porUnidade, paisLinhas, auditoriaLinhas } = montarLinhasExportacao(estado.dados);
+  const { porArea, porUnidade, porCategoria, paisLinhas, auditoriaLinhas } = montarLinhasExportacao(estado.dados);
+  // tabelaHtmlExport formata todo número como moeda — Nº de PAIs e % vão
+  // como texto já formatado.
+  const porCategoriaPdf = porCategoria.map(l => ({
+    ...l, 'Nº de PAIs': l['Nº de PAIs'] == null ? '' : String(l['Nº de PAIs']), '% do total': fmtPct(l['% do total'])
+  }));
   const corpo = `
     <div class="header">
       <div><h1>Grupo Pirineus — Relatório de Investimentos</h1></div>
@@ -504,6 +574,7 @@ export function exportarRelatorioPdf() {
     <div class="desc">${resumoFiltrosTexto()}</div>
     ${tabelaHtmlExport('Consolidado por área', ['Área', 'Aprovado', 'Comprometido', 'Realizado', 'Livre', 'Ajuste de saldo (débito)'], porArea)}
     ${tabelaHtmlExport('Consolidado por unidade', ['Unidade', 'Aprovado', 'Comprometido', 'Realizado', 'Livre', 'Ajuste de saldo (débito)'], porUnidade)}
+    ${tabelaHtmlExport('Por categoria de composição', ['Categoria', 'Nº de PAIs', 'Valor', '% do total'], porCategoriaPdf)}
     ${tabelaHtmlExport('PAIs', ['Número', 'Empresa', 'Área', 'Título', 'Tipo', 'Valor total', 'Status', 'Previsão de conclusão', 'Código MRP'], paisLinhas)}
     ${tabelaHtmlExport('Auditoria de encerramentos', ['Número', 'Empresa', 'Área', 'Valor aprovado', 'Realizado', 'Saldo apurado', 'Destino', 'Número(s) do bem', 'Encerrado em'], auditoriaLinhas)}
     <div class="footer">Sistema de Gestão de Engenharia — Grupo Pirineus</div>`;

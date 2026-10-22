@@ -139,7 +139,7 @@ export async function imprimirPai(paiId) {
     <div class="desc">${pai.descricao}</div>
 
     <h2>Composição</h2>
-    <table><thead><tr><th>Aplicação</th>${encerrado ? '<th>Nº do Bem</th>' : ''}<th>Valor</th></tr></thead><tbody>
+    <table><thead><tr><th>Categoria</th>${encerrado ? '<th>Nº do Bem</th>' : ''}<th>Valor</th></tr></thead><tbody>
       ${(itens || []).map(i => `<tr><td>${i.aplicacao}</td>${encerrado ? `<td>${i.numero_bem || '—'}</td>` : ''}<td>${fmtMoeda(i.valor)}</td></tr>`).join('')}
     </tbody></table>
 

@@ -41,7 +41,7 @@ const SECOES = [
         <li>Confira empresa e área, escolha o ano-calendário (vigente ou o próximo, para a entressafra) e o tipo de investimento.</li>
         <li>Informe o valor total do investimento. O sistema mostra o saldo do bolo da sua área e avisa se não houver saldo suficiente.</li>
         <li>Em <strong>Linhas do plano</strong>, distribua de quais linhas do bolo sai a verba — a soma precisa igualar o valor total, e nenhuma linha pode passar do seu saldo livre.</li>
-        <li>Em <strong>Composição</strong>, lance como o valor será gasto (item + valor). A soma também precisa fechar com o valor total.</li>
+        <li>Em <strong>Composição</strong>, distribua o valor entre as categorias da lista (categoria + valor, cada categoria uma vez). A soma também precisa fechar com o valor total.</li>
         <li>Anexe os documentos obrigatórios e clique em <strong>Enviar à Controladoria</strong>.</li>
       </ol>
       <div class="ajuda-nota">O número do bem de cada item é preenchido só no encerramento, pela Controladoria Contábil — você não precisa informar na abertura.</div>
