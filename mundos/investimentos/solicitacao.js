@@ -219,11 +219,29 @@ function calcular() {
     && new Set(categoriasUsadas).size === categoriasUsadas.length;
   const temAnexos = !!((estado.anexos.a3 || estado.anexosExistentes.a3) && (estado.anexos.viabilidade || estado.anexosExistentes.viabilidade));
 
+  // Saldo só fica ✓ com valor > 0, plano carregado (empresa/ano, com linhas
+  // da área) e livre ≥ valor. Sem valor ou sem plano: pendente (○), não ✓.
+  // Falta de saldo é erro (✗).
+  const planoCarregado = !!estado.planoId && estado.linhas.length > 0;
+  const saldoCheck = !temValor ? { ok: false, texto: 'Saldo: informe o valor total primeiro' }
+    : !planoCarregado ? { ok: false, texto: 'Saldo: nenhum plano carregado para esta área/ano' }
+    : semSaldo ? { ok: false, erro: true, texto: `Saldo insuficiente — faltam ${fmtMoeda(faltam)}` }
+    : { ok: true, texto: 'Saldo da área suficiente' };
+
+  // Textos do checklist dizem a que item se referem (os cabeçalhos das
+  // seções continuam com linhasTexto/composicaoTexto, que já têm contexto).
+  const linhasCheckTexto = estouraLinha ? 'Linhas do plano: uma linha usa mais que o livre'
+    : !temValor ? 'Linhas do plano: informe o valor total primeiro'
+    : linhasTexto;
+  const composicaoCheckTexto = !temValor ? 'Composição: informe o valor total primeiro'
+    : !itensOk ? 'Composição: todos os itens precisam de categoria e valor'
+    : composicaoTexto;
+
   const checks = [
     { ok: temValor, texto: 'Valor total informado' },
-    { ok: linhasBatem, texto: linhasTexto },
-    { ok: composicaoBate && itensOk, texto: !itensOk && temValor ? 'Todos os itens precisam de categoria e valor' : composicaoTexto },
-    { ok: !semSaldo, texto: semSaldo ? `Saldo insuficiente — faltam ${fmtMoeda(faltam)}` : 'Saldo da área suficiente' },
+    { ok: linhasBatem, texto: linhasCheckTexto },
+    { ok: composicaoBate && itensOk, texto: composicaoCheckTexto },
+    saldoCheck,
     { ok: temAnexos, texto: 'A3 e estudo de viabilidade anexados' },
   ];
 
@@ -262,7 +280,7 @@ function render() {
       <strong>${c.avisoPrazo}.</strong> O envio está bloqueado para o plano de ${estado.ano} — você ainda pode salvar o rascunho ou usar o plano do próximo exercício (${estado.ano + 1}), se já publicado.
     </div>` : ''}
 
-    <div style="display:grid;grid-template-columns:1fr 340px;gap:32px;align-items:start">
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:32px;align-items:start">
       <div style="display:flex;flex-direction:column;gap:24px">
 
         <div class="form-section">
@@ -452,7 +470,7 @@ function renderBotaoAnexo(chave) {
     <div>
       <input type="file" id="anexo-input-${chave}" style="display:none" onchange="onAnexoSelecionado('${chave}', this.files[0])">
       <button type="button" class="btn btn-secondary btn-full" id="anexo-btn-${chave}" onclick="document.getElementById('anexo-input-${chave}').click()"
-        style="justify-content:flex-start;border-color:${on ? 'var(--accent)' : 'var(--border)'};background:${on ? 'var(--accent-dim)' : 'var(--surface)'}">
+        style="justify-content:flex-start;text-align:left;white-space:normal;overflow-wrap:anywhere;border-color:${on ? 'var(--accent)' : 'var(--border)'};background:${on ? 'var(--accent-dim)' : 'var(--surface)'}">
         ${rotulo}
       </button>
     </div>`;
@@ -465,12 +483,16 @@ function renderBarraVerba(c) {
   return `<div style="width:${pctReservado}%;background:var(--border2)"></div><div style="width:${pctEstePai}%;background:var(--accent)"></div>`;
 }
 
+// Três estados: ✓ ok · ✗ erro (ex.: saldo insuficiente) · ○ pendente.
 function renderChecklist(c) {
-  return c.checks.map(ck => `
+  return c.checks.map(ck => {
+    const [marca, cor] = ck.ok ? ['✓', 'var(--green)'] : ck.erro ? ['✗', 'var(--red)'] : ['○', 'var(--text3)'];
+    return `
     <div style="display:flex;gap:8px;align-items:flex-start;font-size:13px">
-      <span style="color:${ck.ok ? 'var(--green)' : 'var(--text3)'};font-weight:700">${ck.ok ? '✓' : '○'}</span>
-      <span>${ck.texto}</span>
-    </div>`).join('');
+      <span style="color:${cor};font-weight:700">${marca}</span>
+      <span${ck.erro ? ' style="color:var(--red)"' : ''}>${ck.texto}</span>
+    </div>`;
+  }).join('');
 }
 
 // ═══════════════════════════════════════════════════
