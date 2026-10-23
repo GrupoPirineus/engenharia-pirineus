@@ -2,7 +2,7 @@ import { sb } from '../../shared/supabase.js';
 import { toast, fmtDateTime } from '../../shared/ui.js';
 import { currentUser } from './auth.js';
 import { fmtMoeda, badgeStatusPai } from './dashboard.js';
-import { anoVigente, renderOpcoesAno, dicaAno } from './ano.js';
+import { anoVigente, renderOpcoesAno, dicaAno, hojeBrasilia } from './ano.js';
 
 // ═══════════════════════════════════════════════════
 // CARGA DO PLANO DE INVESTIMENTO (Etapa 6 — papel controladoria_op)
@@ -56,12 +56,6 @@ export function fmtValorAjuste(campo, v) {
 let estado = null;
 
 function numOrZero(v) { const n = parseFloat(v); return isNaN(n) ? 0 : n; }
-
-// Data de hoje em Brasília, 'AAAA-MM-DD' — mesma referência do banco
-// (hoje_brasilia()), para a tela e o trigger concordarem no dia do corte.
-function hojeBrasilia() {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
-}
 
 function fmtDataIso(iso) { const [a, m, d] = iso.split('-'); return `${d}/${m}/${a}`; }
 

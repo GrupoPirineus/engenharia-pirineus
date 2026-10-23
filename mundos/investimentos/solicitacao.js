@@ -5,7 +5,7 @@ import { currentUser } from './auth.js';
 import { renderMeusPais, fmtMoeda } from './dashboard.js';
 import { iniciarEtapaControladoria } from './aprovacao.js';
 import { abrirModalSolicitarAumento } from './aumento.js';
-import { anoVigente, renderOpcoesAno, dicaAno } from './ano.js';
+import { anoVigente, renderOpcoesAno, dicaAno, carregarLimiteAbertura, avisoPrazoAbertura } from './ano.js';
 
 // Bucket reaproveitado do mundo Chamados (mesmo Supabase Storage do projeto),
 // com prefixo próprio para não colidir com os anexos de chamado.
@@ -72,8 +72,8 @@ export async function abrirNovoPai(paiId) {
   const page = document.getElementById('page-content');
   page.innerHTML = '<div class="loading"><div class="spinner"></div> Carregando...</div>';
 
-  const [escopos, tiposInvestimento, categoriasComposicao] = await Promise.all([
-    resolverEscoposSolicitante(), carregarTiposInvestimento(), carregarCategoriasComposicao()
+  const [escopos, tiposInvestimento, categoriasComposicao, limiteAbertura] = await Promise.all([
+    resolverEscoposSolicitante(), carregarTiposInvestimento(), carregarCategoriasComposicao(), carregarLimiteAbertura()
   ]);
   if (!escopos.length) {
     page.innerHTML = `
@@ -95,6 +95,7 @@ export async function abrirNovoPai(paiId) {
     escopos,
     tiposInvestimento,
     categoriasComposicao,
+    limiteAbertura, // { dia, mes } — data limite de envio no ano em exercício (Etapa 24)
     ano: anoVigente(),
     tipo: tiposInvestimento[0]?.nome || '',
     valorTotal: 0,
@@ -226,10 +227,16 @@ function calcular() {
     { ok: temAnexos, texto: 'A3 e estudo de viabilidade anexados' },
   ];
 
+  // Etapa 24: passada a data limite do ano em exercício, o envio fica
+  // bloqueado (rascunho continua liberado). Reenvio de PAI devolvido não
+  // é bloqueado — ele foi aberto dentro do prazo (o trigger faz o mesmo).
+  const avisoPrazo = estado.statusOriginal === 'devolvido' ? null : avisoPrazoAbertura(estado.ano, estado.limiteAbertura);
+  if (avisoPrazo) checks.push({ ok: false, texto: avisoPrazo });
+
   return {
     valorTotal, totalLinhas, totalComposicao, estouraLinha, somaAprovado, somaReservado, somaLivre, livreApos,
     temValor, semSaldo, faltam, linhasBatem, linhasTexto, composicaoBate, composicaoTexto, itensOk, temAnexos,
-    checks, bloqueado: checks.some(c => !c.ok)
+    avisoPrazo, checks, bloqueado: checks.some(c => !c.ok)
   };
 }
 
@@ -249,6 +256,11 @@ function render() {
       </div>
       <div class="text-sm text-muted">${currentUser.nome} · Solicitante · ${esc.empresaNome} · ${esc.setorNome}</div>
     </div>
+
+    ${c.avisoPrazo ? `
+    <div id="aviso-prazo-abertura" style="border:1px solid var(--red);background:var(--red-dim);color:var(--red);border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:20px">
+      <strong>${c.avisoPrazo}.</strong> O envio está bloqueado para o plano de ${estado.ano} — você ainda pode salvar o rascunho ou usar o plano do próximo exercício (${estado.ano + 1}), se já publicado.
+    </div>` : ''}
 
     <div style="display:grid;grid-template-columns:1fr 340px;gap:32px;align-items:start">
       <div style="display:flex;flex-direction:column;gap:24px">
@@ -581,6 +593,7 @@ async function onSalvarRascunho() {
 
 async function onEnviarPai() {
   const c = calcular();
+  if (c.avisoPrazo) { toast(c.avisoPrazo, 'error'); return; }
   if (c.bloqueado) { toast('Complete os itens do checklist antes de enviar', 'error'); return; }
   if (!estado.planoId) { toast('Nenhum plano carregado para esta empresa/ano ainda', 'error'); return; }
   if (!estado.titulo.trim() || !estado.descricao.trim()) { toast('Preencha título e descrição', 'error'); return; }

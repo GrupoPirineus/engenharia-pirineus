@@ -46,6 +46,12 @@
 //     enquanto chamados.status = 'revisao') -> solicitante; a partir do 2º
 //     aviso, com cópia ao(s) gestor(es). Botão com deep link ?chamado=<id>.
 //     Flag: config_notificacoes.evento = 'chamado_lembrete_revisao'.
+//
+// Etapa 24 (os dois mundos): bloco de detalhes com a identidade do item
+// logo abaixo do título, em todos os e-mails de Chamados e de PAI/Aumento
+// (helper único blocoDetalhes + detalhesChamado/detalhesPai/detalhesAumento,
+// que buscam os nomes a partir dos ids do registro). Destinatários,
+// assuntos, flags e lógica de envio não mudaram.
 
 import nodemailer from 'npm:nodemailer@6.9.10'
 import { createClient } from 'npm:@supabase/supabase-js@2'
@@ -147,6 +153,47 @@ async function nomePorId(id: string | null): Promise<string | null> {
   return data?.nome ?? null
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// ETAPA 24 · BLOCO DE DETALHES (helper único — Chamados e Investimentos)
+// Tabela rótulo/valor logo abaixo do título do item. Linha com valor vazio
+// (null, undefined, '') não aparece — nunca sai rótulo sem valor; sem
+// nenhuma linha, o bloco inteiro some.
+// ═══════════════════════════════════════════════════════════════════════
+type LinhaDetalhe = [rotulo: string, valor: string | null | undefined]
+
+function blocoDetalhes(linhas: LinhaDetalhe[], corDestaque: string): string {
+  const visiveis = linhas.filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '')
+  if (visiveis.length === 0) return ''
+  const tr = visiveis.map(([rotulo, valor]) => `
+        <tr>
+          <td style="padding:6px 12px;color:#64748b;font-size:12px;white-space:nowrap;vertical-align:top;border-bottom:1px solid #eef2f6">${escapeHtml(rotulo)}</td>
+          <td style="padding:6px 12px;color:#0f172a;font-size:13px;font-weight:600;border-bottom:1px solid #eef2f6">${escapeHtml(String(valor))}</td>
+        </tr>`).join('')
+  return `
+      <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin:0 0 20px;background:#f8fafc;border:1px solid #e2e8f0;border-left:3px solid ${corDestaque};border-radius:6px">${tr}
+      </table>`
+}
+
+function fmtReais(v: number | string | null | undefined): string | null {
+  if (v === null || v === undefined || v === '') return null
+  const n = Number(v)
+  if (!isFinite(n)) return null
+  return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+}
+
+const PRIORIDADE_LABEL: Record<string, string> = { baixa: 'Baixa', media: 'Média', alta: 'Alta', urgente: 'Urgente' }
+
+// pais.tipo / aumentos_verba.tipo é texto livre desde a Etapa 5 (nome do
+// tipo); PAIs anteriores guardam o código do enum antigo.
+const TIPO_INVESTIMENTO_LEGADO: Record<string, string> = {
+  obra: 'Obra / instalação', maquina_equipamento: 'Máquina / equipamento',
+  ti_software: 'TI / software', melhoria: 'Projeto de melhoria',
+}
+
+function fmtHoras(h: number): string {
+  return `${Number.isInteger(h) ? h : h.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}h`
+}
+
 function montarHtml(opts: {
   titulo: string
   codigo: string
@@ -159,8 +206,10 @@ function montarHtml(opts: {
   // nenhum e-mail já existente muda.
   chamadoId?: string
   textoBotao?: string
+  // Etapa 24: linhas do bloco de detalhes (ver detalhesChamado).
+  detalhes?: LinhaDetalhe[]
 }): string {
-  const { titulo, codigo, cabecalho, emoji, mensagem, corpoExtra, chamadoId, textoBotao } = opts
+  const { titulo, codigo, cabecalho, emoji, mensagem, corpoExtra, chamadoId, textoBotao, detalhes } = opts
   const href = chamadoId ? `${BASE_URL}/?chamado=${encodeURIComponent(chamadoId)}` : BASE_URL
   const blocoMensagem = mensagem
     ? `<p style="margin:0 0 20px;font-size:15px;line-height:1.5;color:#0f172a">${escapeHtml(mensagem)}</p>`
@@ -176,6 +225,7 @@ function montarHtml(opts: {
       <p style="margin:0 0 8px;color:#475569;font-size:13px">Chamado</p>
       <p style="margin:0 0 4px;font-size:18px;font-weight:700;color:#0f172a">${escapeHtml(codigo)}</p>
       <p style="margin:0 0 20px;font-size:15px;color:#334155">${escapeHtml(titulo)}</p>
+      ${blocoDetalhes(detalhes ?? [], '#0d9488')}
       ${corpoExtra ?? ''}
       <a href="${href}" style="display:inline-block;background:#0d9488;color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;font-size:14px">${escapeHtml(textoBotao ?? 'Abrir o sistema')}</a>
       <p style="margin:20px 0 0;font-size:12px;color:#94a3b8">Localize o chamado <strong>${escapeHtml(codigo)}</strong> na sua lista após entrar.</p>
@@ -226,6 +276,68 @@ async function textoDoEvento(evento: string, ch: any): Promise<string> {
       : 'O chamado foi atribuído a um engenheiro e o desenvolvimento será iniciado em breve.'
   }
   return MENSAGEM[evento] ?? ''
+}
+
+// --- Etapa 24 · nomes a partir dos ids (usados pelos dois mundos) ---------
+
+async function nomeEmpresa(id: string | null): Promise<string | null> {
+  if (!id) return null
+  const { data } = await supabase.from('empresas').select('nome').eq('id', id).maybeSingle()
+  return data?.nome ?? null
+}
+
+async function nomeSetor(id: string | null): Promise<string | null> {
+  if (!id) return null
+  const { data } = await supabase.from('setores').select('nome').eq('id', id).maybeSingle()
+  return data?.nome ?? null
+}
+
+// Área do setor NA unidade (empresa_setores.area_id, Etapa 3d).
+async function nomeArea(empresaId: string | null, setorId: string | null): Promise<string | null> {
+  if (!empresaId || !setorId) return null
+  const { data } = await supabase.from('empresa_setores').select('areas(nome)')
+    .eq('empresa_id', empresaId).eq('setor_id', setorId).maybeSingle()
+  return (data as any)?.areas?.nome ?? null
+}
+
+// Status a partir dos quais o chamado já foi aprovado. Em Chamados,
+// 'aprovacao' é "aguardando aprovação do gestor" (todo chamado nasce nele),
+// por isso fica de fora: engenheiro e horas só aparecem depois de aprovado.
+const STATUS_CHAMADO_APROVADO = ['atribuicao', 'execucao', 'revisao', 'correcao', 'concluido']
+
+// Identidade do chamado para o bloco de detalhes. Código e título já saem
+// em destaque logo acima do bloco (montarHtml), por isso não se repetem.
+// Horas: a estimativa definida na aprovação/atribuição (chamados.
+// horas_estimadas) quando existe; se o chamado não tiver estimativa, a soma
+// das horas lançadas no diário de bordo (com rótulo próprio).
+async function detalhesChamado(chamadoId: string | null): Promise<LinhaDetalhe[]> {
+  if (!chamadoId) return []
+  const { data: ch } = await supabase.from('chamados')
+    .select('status, prioridade, empresa_id, setor_id, solicitante_id, engenheiro_id, horas_estimadas')
+    .eq('id', chamadoId).maybeSingle()
+  if (!ch) return []
+
+  const [solicitante, unidade, setor] = await Promise.all([
+    nomePorId(ch.solicitante_id), nomeEmpresa(ch.empresa_id), nomeSetor(ch.setor_id),
+  ])
+  const linhas: LinhaDetalhe[] = [
+    ['Solicitante', solicitante],
+    ['Prioridade', ch.prioridade ? (PRIORIDADE_LABEL[ch.prioridade] ?? ch.prioridade) : null],
+    ['Setor', setor],
+    ['Unidade', unidade],
+  ]
+
+  if (STATUS_CHAMADO_APROVADO.includes(ch.status)) {
+    linhas.push(['Engenheiro', await nomePorId(ch.engenheiro_id)])
+    if (ch.horas_estimadas !== null && ch.horas_estimadas !== undefined) {
+      linhas.push(['Horas estimadas', fmtHoras(Number(ch.horas_estimadas))])
+    } else {
+      const { data: diario } = await supabase.from('diario_bordo').select('horas').eq('chamado_id', chamadoId)
+      const total = (diario ?? []).reduce((a: number, d: any) => a + (Number(d.horas) || 0), 0)
+      linhas.push(['Horas lançadas', total > 0 ? fmtHoras(total) : null])
+    }
+  }
+  return linhas
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -284,15 +396,20 @@ function montarHtmlPAI(opts: {
   // Nos demais (status mudou, passo concluído, lembrete de vencimento), o
   // e-mail é só informativo pro solicitante ou pra Contábil acompanhar.
   paraAprovador?: boolean
+  // Etapa 24: linhas do bloco de detalhes (ver detalhesPai/detalhesAumento).
+  // Ausente nos e-mails sem item (cadastro/acesso liberado).
+  detalhes?: LinhaDetalhe[]
 }): string {
-  const { numero, titulo, cabecalho, emoji, mensagem, link, paraAprovador } = opts
+  const { numero, titulo, cabecalho, emoji, mensagem, link, paraAprovador, detalhes } = opts
   const blocoNumero = numero
     ? `<p style="margin:0 0 8px;color:#475569;font-size:13px">PAI/AUM nº</p>
        <p style="margin:0 0 4px;font-size:18px;font-weight:700;color:#0f172a">${escapeHtml(numero)}</p>`
     : ''
+  // Sem título (aumento de verba), o número fecha o bloco de identidade e
+  // precisa do mesmo respiro antes do bloco de detalhes.
   const blocoTitulo = titulo
     ? `<p style="margin:0 0 20px;font-size:15px;color:#334155">${escapeHtml(titulo)}</p>`
-    : ''
+    : (numero && detalhes?.length ? '<div style="height:16px"></div>' : '')
   const blocoRodapeNumero = numero
     ? `<p style="margin:20px 0 0;font-size:12px;color:#94a3b8">Localize o <strong>${escapeHtml(numero)}</strong> na sua lista após entrar.</p>`
     : ''
@@ -308,6 +425,7 @@ function montarHtmlPAI(opts: {
       <p style="margin:0 0 20px;font-size:15px;line-height:1.5;color:#0f172a">${escapeHtml(mensagem)}</p>
       ${blocoNumero}
       ${blocoTitulo}
+      ${blocoDetalhes(detalhes ?? [], '#1e3a5f')}
       <a href="${href}" style="display:inline-block;background:#1e3a5f;color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;font-size:14px">${textoBotao}</a>
       ${blocoRodapeNumero}
     </div>
@@ -342,6 +460,54 @@ async function emailsAlcada(coluna: 'responsavel_id' | 'diretor_id', empresaId: 
   const ids = [...new Set((data ?? []).map((r: any) => r[coluna]).filter(Boolean))]
   const emails = await Promise.all(ids.map((id: string) => emailPorId(id)))
   return emails.filter((e): e is string => !!e)
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ETAPA 24 · DETALHES DO PAI / AUMENTO (bloco de detalhes)
+// Número e título já saem em destaque logo acima do bloco (montarHtmlPAI),
+// por isso não se repetem.
+// ═══════════════════════════════════════════════════════════════════════
+
+async function detalhesPai(paiId: string | null): Promise<LinhaDetalhe[]> {
+  if (!paiId) return []
+  const { data: p } = await supabase.from('pais')
+    .select('solicitante_id, empresa_id, setor_id, tipo, valor_total').eq('id', paiId).maybeSingle()
+  if (!p) return []
+  const [solicitante, unidade, area, setor] = await Promise.all([
+    nomePorId(p.solicitante_id), nomeEmpresa(p.empresa_id), nomeArea(p.empresa_id, p.setor_id), nomeSetor(p.setor_id),
+  ])
+  return [
+    ['Solicitante', solicitante],
+    ['Unidade', unidade],
+    ['Área', area],
+    ['Setor', setor],
+    ['Tipo de investimento', p.tipo ? (TIPO_INVESTIMENTO_LEGADO[p.tipo] ?? p.tipo) : null],
+    ['Valor total', fmtReais(p.valor_total)],
+  ]
+}
+
+// Remanescente não é coluna: é o valor do investimento menos o aumento
+// necessário (mesma conta da tela do aumento, mundos/investimentos/aumento.js).
+async function detalhesAumento(aumentoId: string | null): Promise<LinhaDetalhe[]> {
+  if (!aumentoId) return []
+  const { data: a } = await supabase.from('aumentos_verba')
+    .select('solicitante_id, empresa_id, setor_id, tipo, valor, valor_investimento').eq('id', aumentoId).maybeSingle()
+  if (!a) return []
+  const [solicitante, unidade, area, setor] = await Promise.all([
+    nomePorId(a.solicitante_id), nomeEmpresa(a.empresa_id), nomeArea(a.empresa_id, a.setor_id), nomeSetor(a.setor_id),
+  ])
+  const remanescente = a.valor_investimento !== null && a.valor_investimento !== undefined
+    ? Number(a.valor_investimento) - Number(a.valor) : null
+  return [
+    ['Solicitante', solicitante],
+    ['Unidade', unidade],
+    ['Área', area],
+    ['Setor', setor],
+    ['Tipo de investimento', a.tipo ? (TIPO_INVESTIMENTO_LEGADO[a.tipo] ?? a.tipo) : null],
+    ['Valor do investimento', fmtReais(a.valor_investimento)],
+    ['Valor remanescente', fmtReais(remanescente)],
+    ['Aumento necessário', fmtReais(a.valor)],
+  ]
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -380,6 +546,7 @@ async function notificarPaiCriado(record: any) {
     cabecalho: 'PAI criado com sucesso', emoji: '📝',
     mensagem: `Seu PAI ${record.numero} foi criado e está em análise pela Controladoria Operacional.`,
     link: { tipo: 'pai', id: record.id },
+    detalhes: await detalhesPai(record.id),
   })
   await enviar([await emailPorId(record.solicitante_id)], `📝 PAI criado — ${record.numero}`, html)
   return ok('pai_criado notificado')
@@ -416,6 +583,7 @@ Deno.serve(async (req) => {
         emoji: EMOJI.comentario,
         mensagem: MENSAGEM.comentario,
         corpoExtra: `<div style="background:#f1f5f9;border-left:3px solid #0d9488;padding:12px 16px;border-radius:6px;margin:0 0 20px;color:#334155;font-size:14px">${escapeHtml(record.mensagem ?? '')}</div>`,
+        detalhes: await detalhesChamado(record.chamado_id),
       })
       await enviar(dest, `${EMOJI.comentario} Novo comentário — ${ch.codigo}`, html)
       return ok('comentário notificado')
@@ -447,6 +615,7 @@ Deno.serve(async (req) => {
         emoji: EMOJI[evento],
         mensagem,
         corpoExtra,
+        detalhes: await detalhesChamado(record.id),
       })
       await enviar(dest, `${EMOJI[evento]} ${LABEL[evento]} — ${record.codigo}`, html)
       return ok(`${evento} notificado`)
@@ -486,6 +655,7 @@ Deno.serve(async (req) => {
           cabecalho: 'PAI aguarda encerramento', emoji: '📥',
           mensagem: `O PAI ${record.numero} teve a conclusão indicada pelo solicitante e aguarda encerramento.`,
           link: { tipo: 'pai', id: record.id }, paraAprovador: true,
+          detalhes: await detalhesPai(record.id),
         })
         await enviar(dest, `📥 PAI aguarda encerramento — ${record.numero}`, html)
         return ok('pai_fila_encerramento notificado')
@@ -500,6 +670,7 @@ Deno.serve(async (req) => {
         cabecalho: LABEL_PAI_STATUS[status] ?? status, emoji: EMOJI_PAI_STATUS[status] ?? '📄',
         mensagem,
         link: { tipo: 'pai', id: record.id },
+        detalhes: await detalhesPai(record.id),
       })
       await enviar([await emailPorId(record.solicitante_id)], `${EMOJI_PAI_STATUS[status] ?? '📄'} ${LABEL_PAI_STATUS[status] ?? status} — ${record.numero}`, html)
       return ok(`pai_${status} notificado`)
@@ -518,6 +689,7 @@ Deno.serve(async (req) => {
 
       const etapa = record.etapa as string
       const ehFormalizacao = etapa === 'controladoria_op' && record.ordem > 1
+      const detalhes = await detalhesPai(record.pai_id)
 
       const flagFila = ehFormalizacao ? 'pai_fila_formalizacao' : `pai_fila_${etapa}`
       if (await flagAtivo(flagFila)) {
@@ -533,6 +705,7 @@ Deno.serve(async (req) => {
             ? `O PAI ${pai.numero} foi aprovado e aguarda formalização.`
             : `O PAI ${pai.numero} está aguardando sua aprovação.`,
           link: { tipo: 'pai', id: record.pai_id }, paraAprovador: true,
+          detalhes,
         })
         await enviar(dest, `📥 ${cabecalho} — ${pai.numero}`, html)
       }
@@ -547,7 +720,7 @@ Deno.serve(async (req) => {
           const mensagem = etapa === 'aprovador'
             ? `A crítica da Controladoria Operacional do PAI ${pai.numero} foi concluída. Segue para o Superintendente.`
             : `A aprovação do Superintendente do PAI ${pai.numero} foi concluída. Segue para o Diretor.`
-          const html = montarHtmlPAI({ numero: pai.numero, titulo: pai.titulo, cabecalho, emoji: '✅', mensagem, link: { tipo: 'pai', id: record.pai_id } })
+          const html = montarHtmlPAI({ numero: pai.numero, titulo: pai.titulo, cabecalho, emoji: '✅', mensagem, link: { tipo: 'pai', id: record.pai_id }, detalhes })
           await enviar([await emailPorId(pai.solicitante_id)], `✅ ${cabecalho} — ${pai.numero}`, html)
         }
       }
@@ -577,6 +750,7 @@ Deno.serve(async (req) => {
         numero: aum.numero, cabecalho: 'Aumento de verba aguarda sua aprovação', emoji: '📥',
         mensagem: `O aumento de verba ${aum.numero} está aguardando sua aprovação.`,
         link: { tipo: 'aumento', id: record.aumento_id }, paraAprovador: true,
+        detalhes: await detalhesAumento(record.aumento_id),
       })
       await enviar(dest, `📥 Aumento de verba aguarda aprovação — ${aum.numero}`, html)
       return ok('passos_aumento notificado')
@@ -600,6 +774,7 @@ Deno.serve(async (req) => {
         numero: record.numero, cabecalho: LABEL_AUM_STATUS[status] ?? status, emoji: EMOJI_AUM_STATUS[status] ?? '📄',
         mensagem,
         link: { tipo: 'aumento', id: record.id },
+        detalhes: await detalhesAumento(record.id),
       })
       await enviar([await emailPorId(record.solicitante_id)], `${EMOJI_AUM_STATUS[status] ?? '📄'} ${LABEL_AUM_STATUS[status] ?? status} — ${record.numero}`, html)
       return ok(`aum_${status} notificado`)
@@ -661,6 +836,7 @@ Deno.serve(async (req) => {
           ? `O PAI ${record.numero} venceu o prazo previsto (${record.previsao_conclusao}) e ainda não foi encerrado.`
           : `O PAI ${record.numero} tem previsão de conclusão em ${record.previsao_conclusao} e ainda não foi encerrado.`,
         link: { tipo: 'pai', id: record.id },
+        detalhes: await detalhesPai(record.id),
       })
       await enviar(dest, `⏰ ${venceu ? 'PAI com prazo vencido' : 'PAI com prazo se aproximando'} — ${record.numero}`, html)
       return ok('aviso_vencimento_pai notificado')
@@ -683,6 +859,7 @@ Deno.serve(async (req) => {
       const html = montarHtmlPAI({
         numero: record.numero, titulo: record.titulo, cabecalho, emoji: '⏰', mensagem,
         link: { tipo: 'pai', id: record.pai_id }, paraAprovador: true,
+        detalhes: await detalhesPai(record.pai_id),
       })
       await enviar(dest, `⏰ Lembrete: ${cabecalho} — ${record.numero}`, html)
       return ok('lembrete_aprovacao_pai notificado')
@@ -695,6 +872,7 @@ Deno.serve(async (req) => {
         numero: record.numero, cabecalho: 'Aumento de verba aguarda sua aprovação', emoji: '⏰',
         mensagem: `O aumento de verba ${record.numero} aguarda sua aprovação há ${record.dias} dias.`,
         link: { tipo: 'aumento', id: record.aumento_id }, paraAprovador: true,
+        detalhes: await detalhesAumento(record.aumento_id),
       })
       await enviar(dest, `⏰ Lembrete: aumento de verba aguarda aprovação — ${record.numero}`, html)
       return ok('lembrete_aprovacao_aumento notificado')
@@ -714,6 +892,7 @@ Deno.serve(async (req) => {
         cabecalho: 'PAI parado por inatividade', emoji: '🚨',
         mensagem: `O PAI ${record.numero} está parado há ${record.dias} dias, aguardando ${etapaLabel}.`,
         link: { tipo: 'pai', id: record.pai_id },
+        detalhes: await detalhesPai(record.pai_id),
       })
       await enviar(await emailsMasters(), `🚨 Escalonamento: PAI parado há ${record.dias} dias — ${record.numero}`, html)
       return ok('escalonamento_aprovacao_pai notificado')
@@ -726,6 +905,7 @@ Deno.serve(async (req) => {
         numero: record.numero, cabecalho: 'Aumento de verba parado por inatividade', emoji: '🚨',
         mensagem: `O aumento de verba ${record.numero} está parado há ${record.dias} dias, aguardando ${etapaLabel}.`,
         link: { tipo: 'aumento', id: record.aumento_id },
+        detalhes: await detalhesAumento(record.aumento_id),
       })
       await enviar(await emailsMasters(), `🚨 Escalonamento: aumento de verba parado há ${record.dias} dias — ${record.numero}`, html)
       return ok('escalonamento_aprovacao_aumento notificado')
@@ -754,6 +934,7 @@ Deno.serve(async (req) => {
           : undefined,
         chamadoId: record.chamado_id,
         textoBotao: 'Abrir e revisar',
+        detalhes: await detalhesChamado(record.chamado_id),
       })
       await enviarComCopia([await emailPorId(record.solicitante_id)], copia, `⏰ Lembrete: chamado aguardando sua revisão — ${record.codigo}`, html)
       return ok(`lembrete_revisao_chamado notificado (aviso ${aviso}${copia.length ? ', com cópia aos gestores' : ''})`)

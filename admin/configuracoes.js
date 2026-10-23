@@ -177,19 +177,39 @@ export async function salvarRevisaoChamados() {
 // (id=1), colunas dia_corte_plano/mes_corte_plano, lidas por
 // data_corte_plano() no banco e por plano.js na tela. O corte vale para o
 // ANO ANTERIOR ao do plano: até ele, o plano publicado aceita ajustes da
-// Controladoria Operacional; depois, congela. Salvar aqui grava só essas
-// duas colunas.
+// Controladoria Operacional; depois, congela.
 //
-// Preparada para receber, como outro bloco de campos dentro deste mesmo
-// card, a "data limite para abertura de PAI no ano em exercício"
-// (pendência futura — não implementada nesta etapa).
+// Etapa 24: + data limite para abertura de PAI no ano em exercício
+// (dia_limite_abertura_pai/mes_limite_abertura_pai, padrão 30/11), lida
+// por data_limite_abertura_pai() no banco e por ano.js na tela. Vale no
+// PRÓPRIO ano do plano: a partir do dia seguinte, PAI e aumento de verba do
+// exercício não podem mais ser enviados. Salvar aqui grava só essas quatro
+// colunas (RLS: só master).
 // ═══════════════════════════════════════════════════
 const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
-const DIAS_NO_MES = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]; // fevereiro sem o dia 29: o corte precisa existir todo ano
+const DIAS_NO_MES = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]; // fevereiro sem o dia 29: as datas precisam existir todo ano
+
+const dd = n => String(n).padStart(2, '0');
 
 function exemploCorte(dia, mes) {
   const anoPlano = new Date().getFullYear() + 1;
-  return `Exemplo: plano de ${anoPlano} → ajustes até ${String(dia).padStart(2, '0')}/${String(mes).padStart(2, '0')}/${anoPlano - 1}.`;
+  return `Exemplo: plano de ${anoPlano} → ajustes até ${dd(dia)}/${dd(mes)}/${anoPlano - 1}.`;
+}
+
+function exemploLimite(dia, mes) {
+  const ano = new Date().getFullYear();
+  return `Exemplo: exercício ${ano} → PAI e aumento de verba enviados até ${dd(dia)}/${dd(mes)}/${ano}.`;
+}
+
+// Mesmo par de campos (dia + mês) para as duas datas da subseção.
+function campoDiaMes(prefixo, dia, mes) {
+  return `
+    <div style="display:flex;gap:10px">
+      <input type="number" min="1" max="31" step="1" id="${prefixo}-dia" value="${dia}" style="max-width:90px" oninput="onCalendarioPlanoInput()">
+      <select id="${prefixo}-mes" style="max-width:200px" onchange="onCalendarioPlanoInput()">
+        ${MESES.map((nome, i) => `<option value="${i + 1}" ${i + 1 === mes ? 'selected' : ''}>${nome}</option>`).join('')}
+      </select>
+    </div>`;
 }
 
 async function montarCalendarioPlano() {
@@ -198,6 +218,8 @@ async function montarCalendarioPlano() {
   if (error) { toast('Erro ao carregar calendário do plano: ' + error.message, 'error'); return; }
   const dia = cfg?.dia_corte_plano ?? 31;
   const mes = cfg?.mes_corte_plano ?? 12;
+  const diaLimite = cfg?.dia_limite_abertura_pai ?? 30;
+  const mesLimite = cfg?.mes_limite_abertura_pai ?? 11;
 
   conteudo.innerHTML = `
     <div class="table-card">
@@ -205,17 +227,20 @@ async function montarCalendarioPlano() {
         <div class="table-title">Calendário do Plano</div>
       </div>
       <div style="padding:20px;max-width:560px">
-        <p class="text-sm text-muted" style="margin-bottom:20px">Define até quando um plano de investimento já publicado ainda aceita ajustes da Controladoria Operacional (alterar, incluir e cancelar linhas, sempre com motivo). Depois da data de corte o plano congela: acréscimos somente por aumento de verba — sem exceção.</p>
+        <p class="text-sm text-muted" style="margin-bottom:20px">Datas que regem o plano de investimento. Valem sem exceção, inclusive para o administrador.</p>
 
         <div class="field">
           <label>Data de corte dos ajustes (dia e mês, no ano anterior ao do plano)</label>
-          <div style="display:flex;gap:10px">
-            <input type="number" min="1" max="31" step="1" id="corte-dia" value="${dia}" style="max-width:90px" oninput="onCortePlanoInput()">
-            <select id="corte-mes" style="max-width:200px" onchange="onCortePlanoInput()">
-              ${MESES.map((nome, i) => `<option value="${i + 1}" ${i + 1 === mes ? 'selected' : ''}>${nome}</option>`).join('')}
-            </select>
-          </div>
-          <div id="corte-exemplo" class="text-xs text-muted" style="margin-top:4px">${exemploCorte(dia, mes)} Padrão: 31 de dezembro.</div>
+          ${campoDiaMes('corte', dia, mes)}
+          <div class="text-xs text-muted" style="margin-top:4px">Até essa data, um plano já publicado aceita ajustes da Controladoria Operacional (alterar, incluir e cancelar linhas, sempre com motivo). Depois, o plano congela: acréscimos somente por aumento de verba.</div>
+          <div id="corte-exemplo" class="text-xs text-muted" style="margin-top:2px">${exemploCorte(dia, mes)} Padrão: 31 de dezembro.</div>
+        </div>
+
+        <div class="field">
+          <label>Data limite para abertura de PAI (dia e mês, no ano em exercício)</label>
+          ${campoDiaMes('limite', diaLimite, mesLimite)}
+          <div class="text-xs text-muted" style="margin-top:4px">A partir do dia seguinte, não é possível enviar PAI nem pedido de aumento de verba que use o plano do ano em exercício (rascunho pode ser salvo). O plano do próximo exercício, se publicado, continua liberado.</div>
+          <div id="limite-exemplo" class="text-xs text-muted" style="margin-top:2px">${exemploLimite(diaLimite, mesLimite)} Padrão: 30 de novembro.</div>
         </div>
 
         <div id="calendario-erro" class="text-xs" style="color:var(--red);min-height:16px;margin-bottom:4px"></div>
@@ -224,26 +249,41 @@ async function montarCalendarioPlano() {
     </div>`;
 }
 
-export function onCortePlanoInput() {
-  const dia = parseInt(document.getElementById('corte-dia').value, 10);
-  const mes = parseInt(document.getElementById('corte-mes').value, 10);
-  const el = document.getElementById('corte-exemplo');
-  if (el && Number.isInteger(dia)) el.textContent = exemploCorte(dia, mes) + ' Padrão: 31 de dezembro.';
+function lerDiaMes(prefixo) {
+  return {
+    dia: parseInt(document.getElementById(`${prefixo}-dia`).value, 10),
+    mes: parseInt(document.getElementById(`${prefixo}-mes`).value, 10)
+  };
+}
+
+function erroDiaMes(nomeCampo, { dia, mes }) {
+  if (!Number.isInteger(dia) || dia < 1 || dia > DIAS_NO_MES[mes - 1]) {
+    return `${nomeCampo}: dia inválido para ${MESES[mes - 1]} (1 a ${DIAS_NO_MES[mes - 1]}).`;
+  }
+  return null;
+}
+
+export function onCalendarioPlanoInput() {
+  const corte = lerDiaMes('corte');
+  const limite = lerDiaMes('limite');
+  const elCorte = document.getElementById('corte-exemplo');
+  const elLimite = document.getElementById('limite-exemplo');
+  if (elCorte && Number.isInteger(corte.dia)) elCorte.textContent = exemploCorte(corte.dia, corte.mes) + ' Padrão: 31 de dezembro.';
+  if (elLimite && Number.isInteger(limite.dia)) elLimite.textContent = exemploLimite(limite.dia, limite.mes) + ' Padrão: 30 de novembro.';
 }
 
 export async function salvarCalendarioPlano() {
   const erroEl = document.getElementById('calendario-erro');
   erroEl.textContent = '';
-  const dia = parseInt(document.getElementById('corte-dia').value, 10);
-  const mes = parseInt(document.getElementById('corte-mes').value, 10);
+  const corte = lerDiaMes('corte');
+  const limite = lerDiaMes('limite');
 
-  if (!Number.isInteger(dia) || dia < 1 || dia > DIAS_NO_MES[mes - 1]) {
-    erroEl.textContent = `Dia inválido para ${MESES[mes - 1]} (1 a ${DIAS_NO_MES[mes - 1]}).`;
-    return;
-  }
+  const erro = erroDiaMes('Data de corte', corte) || erroDiaMes('Data limite de abertura', limite);
+  if (erro) { erroEl.textContent = erro; return; }
 
   const { error } = await sb.from('config_prazos').update({
-    dia_corte_plano: dia, mes_corte_plano: mes,
+    dia_corte_plano: corte.dia, mes_corte_plano: corte.mes,
+    dia_limite_abertura_pai: limite.dia, mes_limite_abertura_pai: limite.mes,
     atualizado_em: new Date().toISOString(), atualizado_por: usuarioLogado?.id || null
   }).eq('id', 1);
   if (error) { erroEl.textContent = 'Erro ao salvar: ' + error.message; return; }
@@ -254,4 +294,4 @@ export async function salvarCalendarioPlano() {
 
 // Funções chamadas via atributos inline (onclick) precisam estar em window,
 // pois módulos ES não expõem suas funções no escopo global automaticamente.
-Object.assign(window, { salvarPrazosComunicacao, salvarRevisaoChamados, salvarCalendarioPlano, onCortePlanoInput });
+Object.assign(window, { salvarPrazosComunicacao, salvarRevisaoChamados, salvarCalendarioPlano, onCalendarioPlanoInput });

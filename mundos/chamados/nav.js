@@ -77,7 +77,8 @@ export function buildNav() {
 
 export async function updateBadges() {
   if (isGestor()) {
-    const { count: ap } = await sb.from('chamados').select('*', {count:'exact',head:true}).eq('status','aprovacao');
+    // 'solicitacao' (legado, Etapa 24) também aguarda a decisão do gestor.
+    const { count: ap } = await sb.from('chamados').select('*', {count:'exact',head:true}).in('status',['aprovacao','solicitacao']);
     const badgeAp = document.getElementById('badge-aprovacao');
     if (badgeAp) { badgeAp.textContent = ap||0; ap>0 ? badgeAp.classList.remove('hidden') : badgeAp.classList.add('hidden'); }
   }

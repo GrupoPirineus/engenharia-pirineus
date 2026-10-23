@@ -201,7 +201,10 @@ export async function openChamado(id) {
 
   let acoes = '';
   if (isGestor()) {
-    if (c.status === 'aprovacao') {
+    // 'solicitacao' só existe em chamados reabertos pelo caminho legado
+    // (removido na Etapa 24) — o gestor decide igual a 'aprovacao', para
+    // nenhum chamado ficar sem ação disponível.
+    if (['aprovacao', 'solicitacao'].includes(c.status)) {
       acoes = `
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-primary btn-sm" onclick="aprovarChamado('${id}')">✓ Aprovar</button>
@@ -546,11 +549,7 @@ export async function rejeitarChamado(id) {
   navigateTo(currentPage);
 }
 
-export async function reabrirChamado(id) {
-  await moverStatus(id, 'solicitacao', 'Chamado reaberto pelo solicitante após rejeição');
-}
-
-// ─── Revisar e Reenviar (chamado reaberto após rejeição, status 'solicitacao') ───
+// ─── Revisar e Reenviar (chamado rejeitado — ou legado parado em 'solicitacao') ───
 export async function abrirRevisarReenviar(id) {
   const { data: c } = await sb.from('chamados').select('*').eq('id', id).single();
   const { data: anexos } = await sb.from('anexos_chamado').select('*').eq('chamado_id', id);

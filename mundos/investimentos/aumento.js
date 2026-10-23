@@ -5,7 +5,7 @@ import { currentUser } from './auth.js';
 import { badgeStatusPai, fmtMoeda } from './dashboard.js';
 import { resolverEscoposSolicitante } from './solicitacao.js';
 import { imprimirAumento } from './pdf.js';
-import { anoVigente, renderOpcoesAno, dicaAno } from './ano.js';
+import { anoVigente, renderOpcoesAno, dicaAno, carregarLimiteAbertura, avisoPrazoAbertura } from './ano.js';
 
 // ═══════════════════════════════════════════════════
 // FLUXO DE AUMENTO DE VERBA (Etapa 7)
@@ -51,7 +51,7 @@ async function buscarRemanescente(empresaId, setorId, ano) {
 }
 
 export async function abrirModalSolicitarAumento(prefill) {
-  const [escopos, tiposInvestimento] = await Promise.all([resolverEscoposSolicitante(), carregarTiposInvestimento()]);
+  const [escopos, tiposInvestimento, limiteAbertura] = await Promise.all([resolverEscoposSolicitante(), carregarTiposInvestimento(), carregarLimiteAbertura()]);
   if (!escopos.length) {
     toast('Sem área de investimento atribuída para solicitar aumento de verba', 'error');
     return;
@@ -71,7 +71,7 @@ export async function abrirModalSolicitarAumento(prefill) {
     : await buscarRemanescente(esc.empresaId, esc.setorId, ano);
 
   estadoForm = {
-    escopos, escopoIdx, tiposInvestimento, ano, remanescente,
+    escopos, escopoIdx, tiposInvestimento, ano, remanescente, limiteAbertura,
     valorInvestimento: numOrZero(prefill?.valorInvestimento),
     tipo: prefill?.tipo || tiposInvestimento[0]?.nome || '',
     justificativa: ''
@@ -87,6 +87,7 @@ export async function abrirModalSolicitarAumento(prefill) {
 function renderModalSolicitarAumento() {
   const esc = estadoForm.escopos[estadoForm.escopoIdx];
   const aumentoNecessario = Math.max(0, estadoForm.valorInvestimento - estadoForm.remanescente);
+  const avisoPrazo = avisoPrazoAbertura(estadoForm.ano, estadoForm.limiteAbertura); // Etapa 24
   return `
     <div class="modal">
       <div class="modal-header">
@@ -96,6 +97,10 @@ function renderModalSolicitarAumento() {
         </button>
       </div>
       <div class="modal-body">
+        ${avisoPrazo ? `
+        <div id="aviso-prazo-aumento" style="border:1px solid var(--red);background:var(--red-dim);color:var(--red);border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:16px">
+          <strong>${avisoPrazo}.</strong> Não é possível enviar aumento de verba para o plano de ${estadoForm.ano}.
+        </div>` : ''}
         ${estadoForm.escopos.length > 1 ? `
         <div class="field"><label>Empresa / Área</label>
           <select id="aumento-escopo" onchange="onAumentoEscopoChange(this.value)">
@@ -141,7 +146,7 @@ function renderModalSolicitarAumento() {
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
-        <button class="btn btn-primary" onclick="onEnviarAumento()">Enviar</button>
+        <button class="btn btn-primary" ${avisoPrazo ? 'disabled' : ''} onclick="onEnviarAumento()">Enviar</button>
       </div>
     </div>`;
 }
@@ -179,6 +184,8 @@ async function onEnviarAumento() {
   const valor = Math.max(0, estadoForm.valorInvestimento - estadoForm.remanescente);
   const justificativa = (estadoForm.justificativa || '').trim();
 
+  const avisoPrazo = avisoPrazoAbertura(estadoForm.ano, estadoForm.limiteAbertura);
+  if (avisoPrazo) { erroEl.textContent = avisoPrazo + '.'; return; }
   if (estadoForm.valorInvestimento <= 0) { erroEl.textContent = 'Informe o valor do investimento.'; return; }
   if (valor <= 0) { erroEl.textContent = 'O valor do investimento já cabe no remanescente — não há aumento necessário.'; return; }
   if (!justificativa) { erroEl.textContent = 'A justificativa é obrigatória.'; return; }

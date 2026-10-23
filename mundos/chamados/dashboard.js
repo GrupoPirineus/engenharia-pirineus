@@ -39,7 +39,7 @@ export async function renderDashboard() {
   ]);
 
   const abertos = (todos||[]).filter(c => !['concluido','rejeitado'].includes(c.status)).length;
-  const aguardando = (todos||[]).filter(c => c.status === 'aprovacao').length;
+  const aguardando = (todos||[]).filter(c => ['aprovacao', 'solicitacao'].includes(c.status)).length;
   const emExecucao = (todos||[]).filter(c => c.status === 'execucao').length;
   const hoje = new Date().toISOString().split('T')[0];
   const atrasados = (todos||[]).filter(c => c.data_desejada && c.data_desejada < hoje && !['concluido','rejeitado'].includes(c.status)).length;

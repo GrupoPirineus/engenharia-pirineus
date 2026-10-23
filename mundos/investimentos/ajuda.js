@@ -38,7 +38,7 @@ const SECOES = [
       <h4>2.1 Abrir um novo PAI</h4>
       <ol>
         <li>No mundo Investimentos, clique em <strong>Meus PAIs → Novo PAI</strong>.</li>
-        <li>Confira empresa e área, escolha o ano-calendário (vigente ou o próximo, para a entressafra) e o tipo de investimento.</li>
+        <li>Confira empresa e área, escolha o ano-calendário (o vigente ou o próximo exercício) e o tipo de investimento.</li>
         <li>Informe o valor total do investimento. O sistema mostra o saldo do bolo da sua área e avisa se não houver saldo suficiente.</li>
         <li>Em <strong>Linhas do plano</strong>, distribua de quais linhas do bolo sai a verba — a soma precisa igualar o valor total, e nenhuma linha pode passar do seu saldo livre.</li>
         <li>Em <strong>Composição</strong>, distribua o valor entre as categorias da lista (categoria + valor, cada categoria uma vez). A soma também precisa fechar com o valor total.</li>
